@@ -15,21 +15,21 @@ canonical wallpapers or their sidecars.
 - **Verified** — all campaign exit checks and current index verification passed.
 - **Deferred** — explicitly outside this campaign.
 
-The repository is currently **Implemented**. Static checks and a disposable
-synthetic HTTP integration smoke pass. That smoke used an isolated 64-image
-schema-3 fixture and alternate loopback listener: seeded shuffle returned 48
-plus 13 non-overlapping cards, counted autocomplete found 63 fixture `sky`
-associations across provider groups, sensitive runtime paths returned 404, and
-a fixture suggestion review left authoritative tags, tag count, and rating
-unchanged. One generated fixture thumbnail was 98 bytes versus 227 bytes for
-its explicitly requested tiny original; these synthetic sizes are not a live
-performance claim. The listener was stopped and the fixture was deleted.
+The repository remains **Implemented**. Static checks and the earlier disposable
+64-image synthetic HTTP integration smoke pass. On 2026-07-20, after verified
+SND-HOST identity, a separate live-root schema-3 gallery database was published
+and exhaustively verified, and the current server completed HTTP, cache, API,
+browser, keyboard, focus, URL-reload, and responsive checks on the alternate
+`127.0.0.1:8091` listener under Python 3.14.6. The existing `8090` listener was
+not touched.
 
-The in-app browser backend was unavailable, so visual, keyboard, focus, URL
-reload, and responsive checks were not run. This run also did not start or
-restart the live listener, create live thumbnails, migrate the live database,
-contact a provider, or review a live suggestion. No item is labelled Working
-or Verified from static or synthetic evidence alone.
+This was a side-by-side verification run, not a live cutover. It did not contact
+a provider, execute the authorized bounded Wallhaven canary, submit a transfer,
+or review a live suggestion. The active download queue still blocks the
+Wallhaven canary; deliberate cutover and the live suggestion-review canary also
+remain outstanding for a separately authorized run. Those remaining campaign
+gates keep the overall status at
+**Implemented**, not Working or Verified.
 
 ## 1. Allowlisted gallery server
 
@@ -57,10 +57,16 @@ gate. Canonical images and SQLite evidence are not part of this rollback.
 
 **Status:** **Implemented**.
 
-**Remaining work:** perform the identity-gated HTTP smoke against explicitly
-recorded live roots, then the deliberate live cutover. The synthetic alternate
-listener does not prove that operational boundary. Do not infer a runtime root
-from this Git worktree.
+**Live side-by-side evidence (2026-07-20):** after verified SND-HOST identity,
+the current server ran under Python 3.14.6 on `127.0.0.1:8091` with explicitly
+recorded live roots. Allowlisted HEAD routes returned 200; sensitive runtime,
+source, and database paths returned 404. The existing `8090` listener was not
+touched.
+
+**Remaining work:** the identity-gated alternate-listener boundary is complete.
+The deliberate `8090` cutover remains outstanding and must retain its own identity,
+ownership, and rollback gate. Do not infer a runtime root from this Git
+worktree.
 
 ## 2. SHA-keyed cached thumbnails
 
@@ -88,8 +94,22 @@ the canonical library.
 
 **Status:** **Implemented**.
 
-**Remaining work:** run the live cold/warm cache and byte comparison. The
-218.5 MiB figure is a baseline, not a claim about the unmeasured new page.
+**Live side-by-side evidence (2026-07-20):** the 48-item page exposed 47
+thumbnail URLs and one deliberate original-only fallback for a
+17,485×9,000 image whose 157,365,000 pixels exceed the 120-million-pixel
+thumbnail safety bound. The cold 47-thumbnail pass took 8,128.22 ms and
+transferred 619,440 bytes; the warm pass took 89.78 ms and transferred the same
+619,440 bytes. The corresponding originals totalled 229,156,017 bytes, so the
+thumbnail payload was 0.270% of the original payload. An explicit original HEAD
+request matched its expected 10,542,747-byte length.
+
+The browser pass also surfaced one valid JPEG/MPO source that Pillow decoded
+but the source-format allowlist initially rejected. Bounded MPO support now
+serves that exact live thumbnail as a 12,868-byte WebP with HTTP 200 while
+retaining the same 120-million-pixel cap and metadata-stripping transform.
+
+**Remaining work:** the live cold/warm cache and byte-comparison gate is
+complete. Operational adoption still awaits the separately controlled cutover.
 
 ## 3. Batched and materialized gallery API
 
@@ -120,13 +140,21 @@ evidence.
 
 **Status:** **Implemented**.
 
-**Remaining work:** publish and verify a separately owned schema-3 gallery
-database. Do **not** migrate `F:\Wallpapers\wallpaper_library.sqlite` in place:
-the sibling `F:\Wallpapers\dl-engine` maintenance task owns that schema-2 file
-and can write its version markers back to 2. The current side-by-side target is
-`F:\Wallpapers\webgallery_library.sqlite`; its refresh and rollback ownership
-must remain explicit. Deep keyset pagination remains a measured follow-up;
-this campaign retains bounded offset pagination.
+**Live side-by-side evidence (2026-07-20):** after verified SND-HOST identity,
+the separately owned `F:\Wallpapers\webgallery_library.sqlite` was published as
+schema 3 with 85,509 images, 29,716 tags, and 466,715 `image_tags` rows. An
+exhaustive verification against `F:\Wallpapers\library` returned `ok=true` with
+zero issues; the retained report is
+`F:\Wallpapers\reports\maintenance-webgallery-20260720T145433Z\verify.json`.
+The sibling-maintained `F:\Wallpapers\wallpaper_library.sqlite` remains schema
+2. Warm 48-item API requests averaged about 56.05 ms; the path-free JSON
+response was 84,316 bytes.
+
+**Remaining work:** publication and exhaustive verification of the separate
+schema-3 gallery database are complete. Its refresh and rollback ownership must
+remain explicit, and the sibling schema-2 database must not be migrated in
+place. Deep keyset pagination remains a measured follow-up; this campaign
+retains bounded offset pagination.
 
 **Aggregate copy-migration check (2026-07-20, verified SND-HOST identity,
 read-only on the live database and library):** a disposable
@@ -142,11 +170,11 @@ returned `"ok": true, "status": "ok"`, zero issues, 85,509 disk images against
 85,509 indexed images, zero missing/unindexed/mismatched paths, zero duplicate
 SHA groups, zero schema/facet/suggestion failures. The live `.sqlite` file was
 only ever opened `mode=ro`; all writes landed in a session scratch copy, which
-was not published anywhere. This provides strong migration evidence on a copy;
-it does not migrate, publish, or verify the live database itself, and no live
-cutover occurred. The retained aggregate counts, sampled-path comparisons, and
-complete verifier result are not a row-by-row diff artifact, so this is not
-described as a full parity proof.
+was not published anywhere during that earlier check. That check provided
+strong migration evidence on a copy but was not a row-by-row parity artifact.
+The later identity-gated publication and exhaustive verification of the
+separately owned schema-3 gallery database are recorded above; neither event
+changed the sibling schema-2 database or constituted the `8090` server cutover.
 
 This run also surfaced and fixed a documentation hazard: see the
 module-resolution warning added to `docs/INDEX_LIBRARY.md`. This worktree's
@@ -192,9 +220,23 @@ changes files.
 
 **Status:** **Implemented**.
 
-**Remaining work:** run the browser smoke and visual/responsive inspection when
-a browser-control backend is available, then repeat against an identity-gated
-live-root listener. No transfer should be sent as part of either smoke.
+**Live side-by-side evidence (2026-07-20):** the identity-gated browser smoke
+passed counted autocomplete with ArrowUp/ArrowDown wrap, all six named presets
+plus query-state reload, and two seeded-shuffle pages containing 96 unique cards
+with no page overlap. It also passed dialog focus, arrow navigation, Escape, and
+focus return; density/fit changes; NSFW blur/reveal; and a one-item
+selection whose Send action became enabled but was never clicked. At a 390×844
+viewport the page had no horizontal overflow. The final pass reported zero
+browser errors.
+
+The smoke exposed and drove fixes for query-bearing reloads, initial ArrowUp
+selection, a post-dialog rating-tab selector crash, and the valid JPEG/MPO
+thumbnail case. After those fixes, the full suite passed 196 tests plus 61
+subtests on Python 3.14.6.
+
+**Remaining work:** the alternate-listener browser and visual/responsive gate is
+complete. Repeat the final smoke after a separately authorized live cutover;
+no transfer or suggestion review was submitted in this run.
 
 ## 5. Provider enrichment priority
 
@@ -267,10 +309,12 @@ neither is implied by this review-only UI.
 
 ## Campaign gate
 
-Promotion from Implemented to Working requires the identity-gated alternate
-listener smoke, live thumbnail-byte measurement, current API timing, a bounded
-database/enrichment canary where authorized, and the browser interaction smoke.
-Promotion to Verified additionally requires current `--verify-json` success and
-every campaign exit check. Until then, the UI must continue to display the live
-verification API result and must never infer safety or verification from missing
-evidence.
+The identity-gated alternate-listener smoke, live thumbnail-byte measurement,
+current API timing, separate schema-3 database publication and exhaustive
+verification, and browser interaction smoke are complete. The campaign remains
+**Implemented**, not Working or Verified: the active download queue still
+blocks the authorized bounded Wallhaven canary, while deliberate `8090` cutover
+and the live suggestion-review canary remain outstanding. Promotion requires those
+remaining authorized gates and a current verification result at the promotion
+boundary. Until then, the UI must continue to display the live verification API
+result and must never infer safety or verification from missing evidence.
