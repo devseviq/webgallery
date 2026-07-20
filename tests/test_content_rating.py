@@ -83,6 +83,7 @@ class ContentRatingQueryTests(unittest.TestCase):
             "INSERT INTO image_tags (image_id, tag_id, provenance) VALUES (?, ?, ?)",
             (image_id, nude_id, "wallhaven-api"),
         )
+        idx.refresh_derived_metadata(self.conn)
         self.conn.commit()
 
     def tearDown(self) -> None:
