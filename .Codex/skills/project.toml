@@ -1,0 +1,47 @@
+[project]
+name = "webgallery"
+conventions = ".continue/rules/project-conventions.md"
+
+[paths]
+state = "data/tasks.json"
+analysis_cache = "data/analysis-cache.json"
+plans = "data/plans"
+specs = "agents"
+tracker = "live-tracker.md"
+
+[commands]
+compile = "python -m compileall -q src reports tests"
+test = "python -m pytest -q"
+test_fast = "python -m pytest -q tests/test_content_rating.py tests/test_wallpaper_metadata.py tests/test_index_library.py tests/test_library_browser.py tests/test_library_transfer.py"
+
+[models]
+low = "mini"
+medium = "standard"
+high = "max"
+
+[conflict-zones]
+zones = [
+  "reports/dashboard_server.py, src/dl_engine/library_browser.py | HTTP route and response contract",
+  "reports/library-browser.html, src/dl_engine/library_browser.py | Browser/API field contract",
+  "src/dl_engine/index_library.py, docs/INDEX_LIBRARY.md | Schema and query documentation",
+]
+
+[schema-validator]
+authority-type = "json-schema"
+authority = ["schemas/wallpaper-metadata.schema.json"]
+version-source = "src/dl_engine/wallpaper_metadata.py"
+version-pattern = "SCHEMA_VERSION\\s*=\\s*(\\d+)"
+
+[schema-validator.consumers.python-index]
+files = [
+  "src/dl_engine/wallpaper_metadata.py",
+  "src/dl_engine/index_library.py",
+]
+extract = "field-bindings"
+
+[schema-validator.consumers.contract-tests]
+files = [
+  "tests/test_wallpaper_metadata.py",
+  "tests/test_index_library.py",
+]
+extract = "assertions"

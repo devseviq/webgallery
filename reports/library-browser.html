@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wallpaper Library</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090d14;
+      --panel: #111823;
+      --panel-2: #182232;
+      --border: #2a374a;
+      --text: #edf3fb;
+      --muted: #9aa9ba;
+      --accent: #62a9ff;
+      --sfw: #49c779;
+      --suggestive: #f1b44c;
+      --nsfw: #f05b69;
+      --unknown: #9b87db;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left, #17243b 0, var(--bg) 36rem);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    a { color: var(--accent); }
+    header, main { width: min(1600px, calc(100% - 28px)); margin-inline: auto; }
+    header { padding: 24px 0 16px; display: flex; gap: 18px; align-items: end; justify-content: space-between; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: clamp(24px, 4vw, 40px); letter-spacing: -.03em; }
+    .subtitle { color: var(--muted); margin-top: 4px; }
+    .nav { display: flex; gap: 12px; }
+    .banner {
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      background: #101925;
+      border-radius: 8px;
+      padding: 11px 13px;
+      margin-bottom: 14px;
+    }
+    .banner.warn { border-left-color: var(--suggestive); background: #211b11; }
+    .banner.error { border-left-color: var(--nsfw); background: #251216; }
+    .rating-tabs, .filters, .transfer-bar, .scroll-footer {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 12px;
+    }
+    button, select, input {
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 7px;
+      padding: 8px 10px;
+      font: inherit;
+    }
+    button { cursor: pointer; }
+    button:hover, button.active { border-color: var(--accent); background: #21334d; }
+    button.primary { border-color: var(--accent); background: #17497b; font-weight: 700; }
+    button[data-rating="sfw"].active { border-color: var(--sfw); }
+    button[data-rating="suggestive"].active { border-color: var(--suggestive); }
+    button[data-rating="nsfw"].active { border-color: var(--nsfw); }
+    button[data-rating="unknown"].active { border-color: var(--unknown); }
+    button:disabled { opacity: .45; cursor: default; }
+    label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+    input[type="text"] { min-width: 180px; }
+    input[type="checkbox"] { min-width: 0; accent-color: var(--nsfw); }
+    .spacer { flex: 1; }
+    .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      gap: 12px;
+      padding-bottom: 20px;
+    }
+    .tile {
+      position: relative;
+      min-width: 0;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .tile.rating-sfw { --rating: var(--sfw); }
+    .tile.rating-suggestive { --rating: var(--suggestive); }
+    .tile.rating-nsfw { --rating: var(--nsfw); }
+    .tile.rating-unknown { --rating: var(--unknown); }
+    .tile.selected { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+    .media {
+      display: grid;
+      place-items: center;
+      height: 220px;
+      background: #06090e;
+      overflow: hidden;
+    }
+    .media img { width: 100%; height: 100%; object-fit: contain; transition: filter .18s, transform .18s; }
+    .media:hover img { transform: scale(1.015); }
+    body[data-reveal-nsfw="false"] .tile.rating-nsfw .media img { filter: blur(24px) brightness(.38); transform: scale(1.12); }
+    .missing { color: var(--muted); padding: 18px; text-align: center; }
+    .badge {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      background: color-mix(in srgb, var(--rating) 28%, #080b10);
+      border: 1px solid var(--rating);
+      border-radius: 999px;
+      color: var(--text);
+      padding: 3px 7px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      z-index: 2;
+    }
+    .select-toggle {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 3;
+      padding: 4px 7px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: color-mix(in srgb, #080b10 88%, transparent);
+      color: var(--text);
+      cursor: pointer;
+      user-select: none;
+    }
+    .select-toggle input { margin: 0; }
+    .tile.selected .select-toggle { border-color: var(--accent); background: #17497b; }
+    figcaption { padding: 9px 10px 11px; }
+    figure { margin: 0; }
+    .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 650; }
+    .meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 7px; }
+    .tag { background: #1b2737; border-radius: 999px; padding: 2px 6px; font-size: 10px; color: #c6d4e3; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .empty { grid-column: 1 / -1; padding: 48px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 10px; }
+    .scroll-sentinel { height: 1px; }
+    .transfer-bar {
+      position: sticky;
+      top: 8px;
+      z-index: 20;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, .28);
+    }
+    .transfer-status { flex: 1 1 260px; color: var(--muted); }
+    .transfer-status.success { color: var(--sfw); }
+    .transfer-status.error { color: var(--nsfw); }
+    .scroll-footer { justify-content: center; min-height: 58px; text-align: center; }
+    .scroll-footer button[hidden] { display: none; }
+    @media (max-width: 620px) {
+      .grid { grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); }
+      .media { height: 180px; }
+      .filters label { width: 100%; }
+      .transfer-bar label { width: 100%; }
+      input[type="text"], select { flex: 1; min-width: 0; }
+    }
+  </style>
+</head>
+<body data-reveal-nsfw="false">
+  <header>
+    <div>
+      <h1>Wallpaper Library</h1>
+      <div class="subtitle">Separate content collections over the canonical index. Originals are never moved.</div>
+    </div>
+    <nav class="nav">
+      <a href="/">Operations dashboard</a>
+      <a href="/api/library/status" target="_blank" rel="noopener">Index status</a>
+    </nav>
+  </header>
+  <main>
+    <div id="status" class="banner">Loading index status…</div>
+
+    <section class="rating-tabs" aria-label="Content rating">
+      <strong>Collection</strong>
+      <button type="button" data-rating="all">All <span class="count"></span></button>
+      <button type="button" data-rating="sfw">SFW <span class="count"></span></button>
+      <button type="button" data-rating="suggestive">Suggestive / Review <span class="count"></span></button>
+      <button type="button" data-rating="nsfw">NSFW <span class="count"></span></button>
+      <button type="button" data-rating="unknown">Unknown <span class="count"></span></button>
+      <span class="spacer"></span>
+      <label title="NSFW thumbnails remain blurred until explicitly revealed">
+        <input id="reveal" type="checkbox"> Reveal NSFW thumbnails
+      </label>
+    </section>
+
+    <form id="filters" class="filters">
+      <label>Sort <select id="sort">
+        <option value="newest">Recently downloaded</option>
+        <option value="oldest">Oldest downloaded</option>
+        <option value="resolution_desc">Highest resolution</option>
+        <option value="resolution_asc">Lowest resolution</option>
+        <option value="size_desc">Largest files</option>
+        <option value="size_asc">Smallest files</option>
+        <option value="franchise">Franchise A–Z</option>
+        <option value="source">Source A–Z</option>
+        <option value="filename">Filename A–Z</option>
+        <option value="path">Folder / path</option>
+      </select></label>
+      <label>Source <select id="source"><option value="">All</option></select></label>
+      <label>Orientation <select id="orientation"><option value="">All</option></select></label>
+      <label>Resolution <select id="bucket"><option value="">All</option></select></label>
+      <label>Exact tag <input id="tag" type="text" maxlength="120" placeholder="e.g. landscape"></label>
+      <label>Franchise <input id="franchise" type="text" maxlength="120" placeholder="exact name"></label>
+      <button type="submit">Apply filters</button>
+      <button id="clear" type="button">Clear</button>
+    </form>
+
+    <section class="transfer-bar" aria-label="Transfer selected wallpapers">
+      <strong id="selection-count">0 selected</strong>
+      <button id="select-loaded" type="button" disabled>Select loaded</button>
+      <button id="clear-selection" type="button" disabled>Clear</button>
+      <span class="spacer"></span>
+      <label>Send copies to <select id="transfer-target" disabled>
+        <option value="">Loading targets…</option>
+      </select></label>
+      <button id="send-selected" class="primary" type="button" disabled>Send selected</button>
+      <span id="transfer-status" class="transfer-status" aria-live="polite">Loading transfer service…</span>
+    </section>
+
+    <section id="grid" class="grid" aria-live="polite"></section>
+    <div id="scroll-sentinel" class="scroll-sentinel" aria-hidden="true"></div>
+    <section class="scroll-footer" aria-label="Infinite scroll status" aria-live="polite" aria-atomic="true">
+      <span id="feed-status" class="count">Loading collection…</span>
+      <button id="load-more" type="button" hidden>Load more</button>
+    </section>
+  </main>
+
+  <script>
+  (function () {
+    'use strict';
+    var BATCH_SIZE = 48;
+    var state = {
+      rating: 'sfw', source: '', orientation: '', bucket: '', tag: '',
+      franchise: '', sort: 'newest'
+    };
+    var facets = null;
+    var grid = document.getElementById('grid');
+    var statusEl = document.getElementById('status');
+    var feedStatus = document.getElementById('feed-status');
+    var loadMoreButton = document.getElementById('load-more');
+    var sentinel = document.getElementById('scroll-sentinel');
+    var observer = null;
+    var requestController = null;
+    var requestGeneration = 0;
+    var nextOffset = 0;
+    var loadedCount = 0;
+    var missingCount = 0;
+    var indexedCount = 0;
+    var hasMore = false;
+    var loading = false;
+    var seenIds = new Set();
+    var loadedItems = new Map();
+    var selectedIds = new Set();
+    var selectedNames = new Map();
+    var transferTargets = [];
+    var transferServiceEnabled = false;
+    var transferMaxItems = 100;
+    var activeTransferJob = null;
+    var transferPollTimer = null;
+    var selectionCount = document.getElementById('selection-count');
+    var selectLoadedButton = document.getElementById('select-loaded');
+    var clearSelectionButton = document.getElementById('clear-selection');
+    var transferTarget = document.getElementById('transfer-target');
+    var sendSelectedButton = document.getElementById('send-selected');
+    var transferStatus = document.getElementById('transfer-status');
+
+    function readUrl() {
+      var p = new URLSearchParams(location.search);
+      state.rating = p.get('rating') || 'sfw';
+      if (!['all', 'sfw', 'suggestive', 'nsfw', 'unknown'].includes(state.rating)) state.rating = 'sfw';
+      ['source', 'orientation', 'bucket', 'tag', 'franchise'].forEach(function (key) {
+        state[key] = p.get(key) || '';
+      });
+      state.sort = p.get('sort') || 'newest';
+      if (![
+        'newest', 'oldest', 'resolution_desc', 'resolution_asc', 'size_desc',
+        'size_asc', 'franchise', 'source', 'filename', 'path'
+      ].includes(state.sort)) state.sort = 'newest';
+    }
+
+    function syncUrl() {
+      var url = new URL(location.href);
+      if (state.rating === 'sfw') url.searchParams.delete('rating');
+      else url.searchParams.set('rating', state.rating);
+      ['source', 'orientation', 'bucket', 'tag', 'franchise'].forEach(function (key) {
+        if (state[key]) url.searchParams.set(key, state[key]);
+        else url.searchParams.delete(key);
+      });
+      if (state.sort === 'newest') url.searchParams.delete('sort');
+      else url.searchParams.set('sort', state.sort);
+      url.searchParams.delete('offset');
+      url.searchParams.delete('limit');
+      history.replaceState(null, '', url);
+    }
+
+    function setSelect(id, values, selected) {
+      var select = document.getElementById(id);
+      while (select.options.length > 1) select.remove(1);
+      Object.keys(values || {}).forEach(function (value) {
+        var option = document.createElement('option');
+        option.value = value;
+        option.textContent = value + ' (' + Number(values[value]).toLocaleString() + ')';
+        option.selected = value === selected;
+        select.appendChild(option);
+      });
+    }
+
+    function paintRatingTabs() {
+      var total = facets ? Number(facets.indexed_images || 0) : 0;
+      document.querySelectorAll('[data-rating]').forEach(function (button) {
+        var key = button.dataset.rating;
+        button.classList.toggle('active', key === state.rating);
+        var count = key === 'all' ? total : Number((facets && facets.ratings[key]) || 0);
+        button.querySelector('.count').textContent = '(' + count.toLocaleString() + ')';
+      });
+    }
+
+    async function loadStatus() {
+      var response = await fetch('/api/library/status', {cache: 'no-store'});
+      var data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Index status failed');
+      facets = data.facets;
+      setSelect('source', facets.sources, state.source);
+      setSelect('orientation', facets.orientations, state.orientation);
+      setSelect('bucket', facets.buckets, state.bucket);
+      paintRatingTabs();
+      statusEl.className = data.verified ? 'banner' : 'banner warn';
+      var verifiedText = data.verified ? 'Verified snapshot.' : 'Working snapshot — not currently verified.';
+      statusEl.textContent = verifiedText + ' ' + data.reason +
+        ' Indexed: ' + Number(facets.indexed_images || 0).toLocaleString() +
+        '. Unknown content remains separate from SFW.';
+    }
+
+    function setTransferStatus(message, kind) {
+      transferStatus.className = 'transfer-status' + (kind ? ' ' + kind : '');
+      transferStatus.textContent = message;
+    }
+
+    function transferableLoadedItems() {
+      return Array.from(loadedItems.values()).filter(function (item) {
+        return item.exists && item.url;
+      });
+    }
+
+    function updateSelectionUi() {
+      var count = selectedIds.size;
+      selectionCount.textContent = count.toLocaleString() + ' selected';
+      clearSelectionButton.disabled = count === 0 || Boolean(activeTransferJob);
+      var loaded = transferableLoadedItems();
+      var allLoadedSelected = loaded.length > 0 && loaded.every(function (item) {
+        return selectedIds.has(item.id);
+      });
+      selectLoadedButton.textContent = allLoadedSelected ? 'Deselect loaded' : 'Select loaded';
+      selectLoadedButton.disabled = loaded.length === 0 || Boolean(activeTransferJob);
+      transferTarget.disabled = !transferServiceEnabled || transferTargets.length === 0 || Boolean(activeTransferJob);
+      sendSelectedButton.disabled = count === 0 || !transferServiceEnabled || !transferTarget.value || Boolean(activeTransferJob);
+      sendSelectedButton.textContent = activeTransferJob ? 'Sending…' : 'Send selected';
+      grid.querySelectorAll('.tile[data-image-id]').forEach(function (tile) {
+        var id = Number(tile.dataset.imageId);
+        var selected = selectedIds.has(id);
+        tile.classList.toggle('selected', selected);
+        var checkbox = tile.querySelector('.select-toggle input');
+        if (checkbox) checkbox.checked = selected;
+      });
+    }
+
+    function setItemSelected(item, shouldSelect) {
+      if (shouldSelect && !selectedIds.has(item.id)) {
+        if (selectedIds.size >= transferMaxItems) {
+          setTransferStatus('A transfer can contain at most ' + transferMaxItems + ' wallpapers.', 'error');
+          updateSelectionUi();
+          return false;
+        }
+        selectedIds.add(item.id);
+        selectedNames.set(item.id, item.filename);
+      } else if (!shouldSelect) {
+        selectedIds.delete(item.id);
+        selectedNames.delete(item.id);
+      }
+      updateSelectionUi();
+      return true;
+    }
+
+    async function loadTransferService() {
+      var response = await fetch('/api/library/transfers', {cache: 'no-store'});
+      var data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Transfer service failed');
+      transferTargets = Array.isArray(data.targets) ? data.targets : [];
+      transferServiceEnabled = Boolean(data.enabled);
+      transferMaxItems = Number(data.max_items || 100);
+      transferTarget.replaceChildren();
+      if (!transferTargets.length) {
+        var unavailable = document.createElement('option');
+        unavailable.value = '';
+        unavailable.textContent = 'No targets configured';
+        transferTarget.appendChild(unavailable);
+        setTransferStatus('No server-side SCP destination is configured.', 'error');
+      } else {
+        transferTargets.forEach(function (target) {
+          var option = document.createElement('option');
+          option.value = target.id;
+          option.textContent = target.label;
+          option.title = target.destination;
+          transferTarget.appendChild(option);
+        });
+        if (data.enabled) {
+          setTransferStatus('Select wallpapers, then send copies. Library originals stay in place.');
+        } else {
+          setTransferStatus('SCP or SSH is unavailable on this machine.', 'error');
+        }
+      }
+      updateSelectionUi();
+    }
+
+    async function pollTransferJob() {
+      if (!activeTransferJob || activeTransferJob === 'starting') return;
+      try {
+        var response = await fetch('/api/library/transfers/' + encodeURIComponent(activeTransferJob), {
+          cache: 'no-store'
+        });
+        var data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Transfer status failed');
+        var job = data.job;
+        if (job.status === 'queued') {
+          setTransferStatus('Queued ' + job.item_count + ' copies for ' + job.target_label + '…');
+        } else if (job.status === 'verifying') {
+          setTransferStatus('Verifying remote machine ' + job.expected_machine_id + '…');
+        } else if (job.status === 'running') {
+          setTransferStatus('Sending ' + job.item_count + ' copies to ' + job.target_label + '…');
+        } else if (job.status === 'completed') {
+          activeTransferJob = null;
+          selectedIds.clear();
+          selectedNames.clear();
+          setTransferStatus('Sent ' + job.item_count + ' copies to ' + job.target_label + '.', 'success');
+          updateSelectionUi();
+          return;
+        } else {
+          activeTransferJob = null;
+          setTransferStatus('Transfer failed: ' + (job.error || 'unknown SCP error'), 'error');
+          updateSelectionUi();
+          return;
+        }
+        updateSelectionUi();
+        transferPollTimer = window.setTimeout(pollTransferJob, 1000);
+      } catch (error) {
+        setTransferStatus('Could not read transfer status: ' + error.message + '. Retrying…', 'error');
+        transferPollTimer = window.setTimeout(pollTransferJob, 2000);
+      }
+    }
+
+    async function sendSelected() {
+      if (activeTransferJob || !selectedIds.size || !transferTarget.value) return;
+      var target = transferTargets.find(function (candidate) {
+        return candidate.id === transferTarget.value;
+      });
+      if (!target) return;
+      var count = selectedIds.size;
+      if (!window.confirm(
+        'Send ' + count + ' wallpaper ' + (count === 1 ? 'copy' : 'copies') +
+        ' to ' + target.label + '?\n\n' + target.destination +
+        '\n\nThe originals will remain in the library.'
+      )) return;
+      activeTransferJob = 'starting';
+      updateSelectionUi();
+      setTransferStatus('Creating transfer job…');
+      try {
+        var response = await fetch('/api/library/transfers', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            target: target.id,
+            image_ids: Array.from(selectedIds)
+          })
+        });
+        var data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Transfer request failed');
+        activeTransferJob = data.job.id;
+        setTransferStatus('Queued ' + data.job.item_count + ' copies for ' + data.job.target_label + '…');
+        updateSelectionUi();
+        pollTransferJob();
+      } catch (error) {
+        activeTransferJob = null;
+        setTransferStatus('Could not start transfer: ' + error.message, 'error');
+        updateSelectionUi();
+      }
+    }
+
+    function apiUrl(offset) {
+      var url = new URL('/api/library', location.origin);
+      if (state.rating !== 'all') url.searchParams.set('rating', state.rating);
+      ['source', 'orientation', 'bucket', 'tag', 'franchise'].forEach(function (key) {
+        if (state[key]) url.searchParams.set(key, state[key]);
+      });
+      url.searchParams.set('sort', state.sort);
+      url.searchParams.set('offset', String(offset));
+      url.searchParams.set('limit', String(BATCH_SIZE));
+      return url;
+    }
+
+    function text(tag, className, value) {
+      var node = document.createElement(tag);
+      if (className) node.className = className;
+      node.textContent = value == null ? '' : String(value);
+      return node;
+    }
+
+    function formatBytes(value) {
+      var bytes = Number(value);
+      if (!Number.isFinite(bytes) || bytes < 0) return '';
+      var units = ['B', 'KB', 'MB', 'GB'];
+      var unit = 0;
+      while (bytes >= 1024 && unit < units.length - 1) {
+        bytes /= 1024;
+        unit += 1;
+      }
+      return (unit && bytes < 10 ? bytes.toFixed(1) : Math.round(bytes)) + ' ' + units[unit];
+    }
+
+    function formatDownloadedAt(value) {
+      if (!value) return '';
+      var date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      });
+    }
+
+    function renderItem(item) {
+      var figure = document.createElement('figure');
+      figure.className = 'tile rating-' + item.content_rating;
+      figure.dataset.imageId = String(item.id);
+      figure.classList.toggle('selected', selectedIds.has(item.id));
+      var selectLabel = document.createElement('label');
+      selectLabel.className = 'select-toggle';
+      selectLabel.title = item.exists ? 'Select ' + item.filename + ' for transfer' : 'Missing files cannot be transferred';
+      var selectBox = document.createElement('input');
+      selectBox.type = 'checkbox';
+      selectBox.checked = selectedIds.has(item.id);
+      selectBox.disabled = !item.exists || !item.url;
+      selectBox.setAttribute('aria-label', 'Select ' + item.filename + ' for transfer');
+      selectBox.addEventListener('change', function () {
+        if (!setItemSelected(item, selectBox.checked)) selectBox.checked = false;
+      });
+      selectLabel.appendChild(selectBox);
+      selectLabel.appendChild(document.createTextNode(' Select'));
+      figure.appendChild(selectLabel);
+      var badge = text('span', 'badge', item.content_rating);
+      badge.title = item.rating_basis + (item.rating_reasons.length ? ': ' + item.rating_reasons.join(', ') : '');
+      figure.appendChild(badge);
+
+      var media = document.createElement(item.url && item.exists ? 'a' : 'div');
+      media.className = 'media';
+      if (item.url && item.exists) {
+        media.href = item.url;
+        media.target = '_blank';
+        media.rel = 'noopener';
+        var img = document.createElement('img');
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.src = item.url;
+        img.alt = item.filename;
+        media.appendChild(img);
+      } else {
+        media.appendChild(text('div', 'missing', 'Indexed path is currently missing'));
+      }
+      figure.appendChild(media);
+
+      var caption = document.createElement('figcaption');
+      caption.appendChild(text('div', 'title', item.franchise || item.filename));
+      var dimensions = item.width && item.height ? item.width + '×' + item.height : 'unknown size';
+      caption.appendChild(text('div', 'meta', dimensions + ' · ' + item.resolution_bucket + ' · ' + item.orientation));
+      caption.appendChild(text('div', 'meta', item.source + ' · purity ' + item.purity + ' · ' + item.rating_basis));
+      var fileFacts = [];
+      if (item.downloaded_at) fileFacts.push('downloaded ' + formatDownloadedAt(item.downloaded_at));
+      if (item.size_bytes != null) fileFacts.push(formatBytes(item.size_bytes));
+      if (fileFacts.length) caption.appendChild(text('div', 'meta', fileFacts.join(' · ')));
+      var tags = document.createElement('div');
+      tags.className = 'tags';
+      (item.tags || []).slice(0, 7).forEach(function (tag) {
+        tags.appendChild(text('span', 'tag', tag.name));
+      });
+      caption.appendChild(tags);
+      figure.appendChild(caption);
+      return figure;
+    }
+
+    function updateFeedStatus(message, showRetry) {
+      if (message) {
+        feedStatus.textContent = message;
+      } else if (loading) {
+        feedStatus.textContent = loadedCount ?
+          'Loading more pictures… ' + loadedCount.toLocaleString() + ' shown' :
+          'Loading collection…';
+      } else if (!loadedCount) {
+        feedStatus.textContent = 'No indexed pictures match these filters.';
+      } else {
+        feedStatus.textContent = loadedCount.toLocaleString() + ' pictures loaded';
+        if (indexedCount) feedStatus.textContent += ' · ' + indexedCount.toLocaleString() + ' indexed total';
+        if (missingCount) feedStatus.textContent += ' · ' + missingCount.toLocaleString() + ' missing';
+        if (!hasMore) feedStatus.textContent += ' · end of collection';
+      }
+      loadMoreButton.textContent = showRetry ? 'Retry' : 'Load more';
+      loadMoreButton.hidden = !(showRetry || (!observer && hasMore && !loading));
+      grid.setAttribute('aria-busy', loading ? 'true' : 'false');
+    }
+
+    function maybeFillViewport() {
+      if (!observer || loading || !hasMore) return;
+      requestAnimationFrame(function () {
+        if (!loading && hasMore && sentinel.getBoundingClientRect().top <= window.innerHeight + 800) {
+          loadMore();
+        }
+      });
+    }
+
+    function appendBatch(data) {
+      var fragment = document.createDocumentFragment();
+      var appended = 0;
+      if (!loadedCount) grid.replaceChildren();
+      data.items.forEach(function (item) {
+        if (seenIds.has(item.id)) return;
+        seenIds.add(item.id);
+        loadedItems.set(item.id, item);
+        fragment.appendChild(renderItem(item));
+        appended += 1;
+        if (!item.exists) missingCount += 1;
+      });
+      grid.appendChild(fragment);
+      loadedCount += appended;
+      indexedCount = Number(data.index.indexed_images || 0);
+      nextOffset = data.page.offset + data.page.returned;
+      hasMore = Boolean(data.page.has_more) && data.page.returned > 0;
+      if (!loadedCount && !hasMore) {
+        grid.replaceChildren(text('div', 'empty', 'No indexed pictures match these filters.'));
+      }
+      paintRatingTabs();
+      updateSelectionUi();
+      syncUrl();
+      updateFeedStatus();
+      maybeFillViewport();
+    }
+
+    async function loadMore() {
+      if (loading || !hasMore) return;
+      var generation = requestGeneration;
+      var offset = nextOffset;
+      loading = true;
+      updateFeedStatus();
+      requestController = typeof AbortController === 'function' ? new AbortController() : null;
+      try {
+        var options = {cache: 'no-store'};
+        if (requestController) options.signal = requestController.signal;
+        var response = await fetch(apiUrl(offset), options);
+        var data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Library query failed');
+        if (generation !== requestGeneration) return;
+        loading = false;
+        appendBatch(data);
+      } catch (error) {
+        if (generation !== requestGeneration || error.name === 'AbortError') return;
+        loading = false;
+        if (!loadedCount) grid.replaceChildren(text('div', 'empty', 'Could not load the collection.'));
+        updateFeedStatus('Could not load more pictures: ' + error.message, true);
+      } finally {
+        if (generation === requestGeneration) requestController = null;
+      }
+    }
+
+    function resetFeed() {
+      requestGeneration += 1;
+      if (requestController) requestController.abort();
+      requestController = null;
+      nextOffset = 0;
+      loadedCount = 0;
+      missingCount = 0;
+      indexedCount = 0;
+      hasMore = true;
+      loading = false;
+      seenIds.clear();
+      loadedItems.clear();
+      grid.replaceChildren();
+      updateSelectionUi();
+      syncUrl();
+      loadMore();
+    }
+
+    function startInfiniteScroll() {
+      if (!('IntersectionObserver' in window)) {
+        observer = null;
+        return;
+      }
+      observer = new IntersectionObserver(function (entries) {
+        if (entries.some(function (entry) { return entry.isIntersecting; })) loadMore();
+      }, {rootMargin: '800px 0px'});
+      observer.observe(sentinel);
+    }
+
+    document.querySelectorAll('[data-rating]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        state.rating = button.dataset.rating;
+        resetFeed();
+      });
+    });
+    document.getElementById('reveal').addEventListener('change', function () {
+      document.body.dataset.revealNsfw = this.checked ? 'true' : 'false';
+    });
+    document.getElementById('filters').addEventListener('submit', function (event) {
+      event.preventDefault();
+      ['source', 'orientation', 'bucket', 'tag', 'franchise'].forEach(function (key) {
+        state[key] = document.getElementById(key).value.trim();
+      });
+      resetFeed();
+    });
+    document.getElementById('clear').addEventListener('click', function () {
+      state.source = state.orientation = state.bucket = state.tag = state.franchise = '';
+      ['source', 'orientation', 'bucket', 'tag', 'franchise'].forEach(function (key) {
+        document.getElementById(key).value = '';
+      });
+      resetFeed();
+    });
+    document.getElementById('sort').addEventListener('change', function () {
+      state.sort = this.value;
+      resetFeed();
+    });
+    selectLoadedButton.addEventListener('click', function () {
+      var loaded = transferableLoadedItems();
+      var allLoadedSelected = loaded.length > 0 && loaded.every(function (item) {
+        return selectedIds.has(item.id);
+      });
+      if (allLoadedSelected) {
+        loaded.forEach(function (item) {
+          selectedIds.delete(item.id);
+          selectedNames.delete(item.id);
+        });
+      } else {
+        loaded.some(function (item) {
+          if (selectedIds.has(item.id)) return false;
+          if (selectedIds.size >= transferMaxItems) return true;
+          selectedIds.add(item.id);
+          selectedNames.set(item.id, item.filename);
+          return false;
+        });
+        if (selectedIds.size >= transferMaxItems && loaded.length > transferMaxItems) {
+          setTransferStatus('Selected the maximum of ' + transferMaxItems + ' wallpapers.');
+        }
+      }
+      updateSelectionUi();
+    });
+    clearSelectionButton.addEventListener('click', function () {
+      selectedIds.clear();
+      selectedNames.clear();
+      updateSelectionUi();
+    });
+    transferTarget.addEventListener('change', updateSelectionUi);
+    sendSelectedButton.addEventListener('click', sendSelected);
+    loadMoreButton.addEventListener('click', loadMore);
+    window.addEventListener('beforeunload', function () {
+      if (transferPollTimer) window.clearTimeout(transferPollTimer);
+    });
+
+    readUrl();
+    document.getElementById('sort').value = state.sort;
+    document.getElementById('tag').value = state.tag;
+    document.getElementById('franchise').value = state.franchise;
+    startInfiniteScroll();
+    loadStatus().catch(function (error) {
+      statusEl.className = 'banner error';
+      statusEl.textContent = 'Could not load index status: ' + error.message;
+    }).finally(resetFeed);
+    loadTransferService().catch(function (error) {
+      transferServiceEnabled = false;
+      setTransferStatus('Could not load transfer service: ' + error.message, 'error');
+      updateSelectionUi();
+    });
+  }());
+  </script>
+</body>
+</html>

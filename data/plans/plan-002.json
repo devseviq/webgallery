@@ -1,0 +1,799 @@
+{
+  "id": "plan-002",
+  "schema_version": 1,
+  "artifact_version": 1,
+  "created_at": "2026-07-19T23:45:16+00:00",
+  "status": "approved",
+  "description": "Secure and improve the wallpaper web gallery with cached thumbnails, faster metadata queries, discovery controls, provider enrichment, and reviewable visual-tag suggestions",
+  "slug": "secure-and-improve-the",
+  "planner_kind": "planner",
+  "source_discovery_docs": [
+    "docs/discovery-gallery-sorting-presentation.md",
+    "docs/discovery-picture-category-navigation.md",
+    "docs/discovery-sorting-tag-pipeline.md"
+  ],
+  "source_roadmap": "",
+  "phase": "",
+  "behavioral_invariants": [
+    "Canonical image and .wallpaper.json sidecar files remain paired and are never moved, renamed, deleted, rewritten, or physically regrouped by the gallery campaign.",
+    "SQLite remains a rebuildable index; raw provider tags and durable provider ledgers remain evidence, while aliases and machine suggestions are additive layers.",
+    "Unknown content is never promoted to SFW because tags or purity evidence are absent.",
+    "Only explicitly allowlisted loopback HTTP routes may read report assets, sanitized queue status, thumbnails, or canonical originals; arbitrary workspace paths remain unreachable.",
+    "Pending and rejected visual suggestions never become authoritative tags or content-rating evidence.",
+    "Any live database, cache, process, or provider-ledger mutation runs only after Get-VerifiedMachineIdentity.ps1 returns VERIFIED for SND-HOST."
+  ],
+  "rollback_strategy": "Stop the replacement server, restore the prior dashboard_server.py and generated report HTML from the pre-campaign diff, and remove only the dedicated derived thumbnail cache. If schema version 3 or enrichment behavior fails, retain canonical images, sidecars, and provider ledgers, discard the rebuildable SQLite file, restore the previous code, and rebuild schema version 2. Disable suggestion review writes without deleting suggestion records so provenance and decisions remain auditable.",
+  "legacy_status": "",
+  "next_letter": "wpg",
+  "agents": [
+    {
+      "letter": "wpd",
+      "name": "secure-thumbnail-serving",
+      "scope": "Replace broad static serving with explicit allowlisted report and media routes, add SHA-keyed cached thumbnails, and preserve the operations dashboard through sanitized contracts.",
+      "deps": [],
+      "files": [
+        "reports/dashboard_server.py",
+        "reports/_build_dashboard.py",
+        "reports/_render_dashboard.py",
+        "reports/README_live_dashboard.md",
+        "reports/watch_dashboard.ps1",
+        "src/dl_engine/gallery_thumbnails.py",
+        "tests/test_gallery_thumbnails.py",
+        "tests/test_dashboard_server.py",
+        "pyproject.toml",
+        "requirements.txt",
+        "live-tracker.md"
+      ],
+      "group": 0,
+      "complexity": "high"
+    },
+    {
+      "letter": "wpe",
+      "name": "optimize-enrich-index",
+      "scope": "Materialize gallery ratings and facets, batch tag hydration, add counted tag discovery and deterministic sorts, repair provider enrichment progress, and store visual tags only as reviewable suggestions.",
+      "deps": [
+        "wpd"
+      ],
+      "files": [
+        "src/dl_engine/index_library.py",
+        "src/dl_engine/library_browser.py",
+        "tests/test_index_library.py",
+        "tests/test_library_browser.py",
+        "docs/INDEX_LIBRARY.md",
+        "docs/CONTENT_RATING.md"
+      ],
+      "group": 1,
+      "complexity": "high"
+    },
+    {
+      "letter": "wpf",
+      "name": "build-gallery-discovery-ui",
+      "scope": "Add clickable typed tags, counted autocomplete, lightbox and keyboard navigation, density and fit controls, named URL presets, deterministic shuffle controls, and provenance-aware suggestion review presentation.",
+      "deps": [
+        "wpe"
+      ],
+      "files": [
+        "reports/library-browser.html",
+        "tests/test_gallery_browser_contract.py",
+        "docs/GALLERY_ROADMAP.md"
+      ],
+      "group": 2,
+      "complexity": "high"
+    }
+  ],
+  "groups": {
+    "0": [
+      "wpd"
+    ],
+    "1": [
+      "wpe"
+    ],
+    "2": [
+      "wpf"
+    ]
+  },
+  "conflicts": [],
+  "integration_steps": [],
+  "plan_doc": "docs/campaign-plan-002-secure-and-improve-the.md",
+  "plan_file": "data/plans/plan-002.json",
+  "plan_elements": {
+    "campaign_title": "Secure and improve the wallpaper web gallery with cached thumbnails, faster metadata queries, discovery controls, provider enrichment, and reviewable visual-tag suggestions",
+    "goal_statement": "Deliver a safer and substantially lighter full-library gallery over the canonical rebuildable SQLite index: expose only explicit dashboard, API, thumbnail, and original-media routes; replace card originals with cached thumbnails; remove avoidable query work; make typed metadata navigable; resume provider enrichment without skipped rows; and keep visual-model output separate, confidence-scored, provenance-bearing, and reviewable. Canonical images and sidecars remain unchanged, unknown content never becomes SFW by absence of evidence, and every live mutation remains gated by verified SND-HOST identity.",
+    "exit_criteria": [
+      "Known direct paths for queue state, environment/config files, backup files, the SQLite database, and arbitrary workspace files return 404 or 403, while allowlisted dashboard, library API, thumbnail, canonical-original, rebuild, pause, and transfer contracts still work.",
+      "Library cards use bounded SHA-keyed cached thumbnails with atomic generation, orientation-safe decoding, cache-hit behavior, and explicit cache headers; originals are loaded only by the lightbox or direct-original action, and a 48-card SFW smoke page no longer transfers the prior 218.5 MiB of originals.",
+      "SQLite schema migration and rebuild materialize content-rating, rating-confidence, tag-count, and facet data; a normal page batch-hydrates tags without one query per image, common sorts have supporting indexes, and existing read-only/query/verification behavior remains compatible.",
+      "The API provides counted prefix tag autocomplete, typed/provenanced tags, deterministic seeded shuffle and triage sorts, thumbnail/original URLs, and reviewable tag-suggestion records without merging pending machine suggestions into authoritative provider tags or safety ratings.",
+      "The gallery provides clickable tag chips, active filters, counted autocomplete, a keyboard-accessible lightbox/detail view, density and contain/crop controls, named bookmarkable URL presets, and deterministic shuffle whose seed survives reload and pagination.",
+      "Wallhaven enrichment selects every pending row without a lexicographic cursor skip, a bounded canary proves durable resume behavior, and provider enrichment records preserve raw source tags; Zerochan and Anime-Pictures enrichment gaps are represented by resumable provenance-bearing ledgers/import paths with measured coverage rather than fabricated tags.",
+      "Visual tags are stored only as suggestions with label, confidence, generator/model version, provenance, review status, timestamps, and reviewer decision; pending or rejected suggestions never enter canonical tags, filters, content ratings, or provider evidence.",
+      "Python compile, full pytest, focused gallery/index/server tests, JavaScript contract tests, allowlist HTTP probes, warm API timing, thumbnail-byte measurement, and git diff checks pass with zero unexpected failures.",
+      "Active gallery, index, content-rating, server, and roadmap documentation records operation, migration, rollback, cache cleanup, provider coverage, suggestion provenance, and the exact verified-versus-working snapshot distinction."
+    ],
+    "impact_assessment": [
+      {
+        "file": "reports/dashboard_server.py",
+        "lines": "395",
+        "change_type": "modify",
+        "risk": "high - live HTTP routing, control endpoints, and transfer API"
+      },
+      {
+        "file": "reports/_build_dashboard.py",
+        "lines": "675",
+        "change_type": "modify",
+        "risk": "medium - snapshot media URL producer"
+      },
+      {
+        "file": "reports/_render_dashboard.py",
+        "lines": "1704",
+        "change_type": "modify",
+        "risk": "high - operations dashboard generator and client API contract"
+      },
+      {
+        "file": "reports/watch_dashboard.ps1",
+        "lines": "116",
+        "change_type": "modify",
+        "risk": "medium - operational launcher and explicit runtime-root wiring"
+      },
+      {
+        "file": "reports/README_live_dashboard.md",
+        "lines": "178",
+        "change_type": "modify",
+        "risk": "low - live server operations guide"
+      },
+      {
+        "file": "src/dl_engine/gallery_thumbnails.py",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "medium - bounded decoder and derived-cache writer"
+      },
+      {
+        "file": "tests/test_gallery_thumbnails.py",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "low - isolated thumbnail regression suite"
+      },
+      {
+        "file": "tests/test_dashboard_server.py",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "medium - live route and denial contract tests"
+      },
+      {
+        "file": "pyproject.toml",
+        "lines": "23",
+        "change_type": "modify",
+        "risk": "medium - Pillow runtime dependency declaration"
+      },
+      {
+        "file": "requirements.txt",
+        "lines": "1",
+        "change_type": "modify",
+        "risk": "medium - dependency parity with pyproject.toml"
+      },
+      {
+        "file": "live-tracker.md",
+        "lines": "18",
+        "change_type": "modify",
+        "risk": "low - campaign completion record"
+      },
+      {
+        "file": "src/dl_engine/index_library.py",
+        "lines": "3513",
+        "change_type": "modify",
+        "risk": "high - central SQLite schema, ingest, query, and enrichment module"
+      },
+      {
+        "file": "src/dl_engine/library_browser.py",
+        "lines": "260",
+        "change_type": "modify",
+        "risk": "high - public gallery API serialization and validation"
+      },
+      {
+        "file": "tests/test_index_library.py",
+        "lines": "2151",
+        "change_type": "modify",
+        "risk": "medium - central index regression suite"
+      },
+      {
+        "file": "tests/test_library_browser.py",
+        "lines": "223",
+        "change_type": "modify",
+        "risk": "medium - gallery API contract suite"
+      },
+      {
+        "file": "docs/INDEX_LIBRARY.md",
+        "lines": "262",
+        "change_type": "modify",
+        "risk": "low - index and enrichment operations guide"
+      },
+      {
+        "file": "docs/CONTENT_RATING.md",
+        "lines": "96",
+        "change_type": "modify",
+        "risk": "medium - safety-sensitive rating contract"
+      },
+      {
+        "file": "reports/library-browser.html",
+        "lines": "784",
+        "change_type": "modify",
+        "risk": "high - full-library UI, infinite scroll, and transfer integration"
+      },
+      {
+        "file": "tests/test_gallery_browser_contract.py",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "low - static JavaScript and accessibility contract tests"
+      },
+      {
+        "file": "docs/GALLERY_ROADMAP.md",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "low - durable six-point roadmap and coverage record"
+      }
+    ],
+    "agent_roster": [
+      {
+        "letter": "wpd",
+        "name": "secure-thumbnail-serving",
+        "scope": "Replace broad static serving with explicit allowlisted report and media routes, add SHA-keyed cached thumbnails, and preserve the operations dashboard through sanitized contracts.",
+        "deps": [],
+        "files": [
+          "reports/dashboard_server.py",
+          "reports/_build_dashboard.py",
+          "reports/_render_dashboard.py",
+          "reports/README_live_dashboard.md",
+          "reports/watch_dashboard.ps1",
+          "src/dl_engine/gallery_thumbnails.py",
+          "tests/test_gallery_thumbnails.py",
+          "tests/test_dashboard_server.py",
+          "pyproject.toml",
+          "requirements.txt",
+          "live-tracker.md"
+        ],
+        "group": 0,
+        "complexity": "high"
+      },
+      {
+        "letter": "wpe",
+        "name": "optimize-enrich-index",
+        "scope": "Materialize gallery ratings and facets, batch tag hydration, add counted tag discovery and deterministic sorts, repair provider enrichment progress, and store visual tags only as reviewable suggestions.",
+        "deps": [
+          "wpd"
+        ],
+        "files": [
+          "src/dl_engine/index_library.py",
+          "src/dl_engine/library_browser.py",
+          "tests/test_index_library.py",
+          "tests/test_library_browser.py",
+          "docs/INDEX_LIBRARY.md",
+          "docs/CONTENT_RATING.md"
+        ],
+        "group": 1,
+        "complexity": "high"
+      },
+      {
+        "letter": "wpf",
+        "name": "build-gallery-discovery-ui",
+        "scope": "Add clickable typed tags, counted autocomplete, lightbox and keyboard navigation, density and fit controls, named URL presets, deterministic shuffle controls, and provenance-aware suggestion review presentation.",
+        "deps": [
+          "wpe"
+        ],
+        "files": [
+          "reports/library-browser.html",
+          "tests/test_gallery_browser_contract.py",
+          "docs/GALLERY_ROADMAP.md"
+        ],
+        "group": 2,
+        "complexity": "high"
+      }
+    ],
+    "dependency_graph": [
+      {
+        "group": 0,
+        "agents": [
+          "wpd"
+        ]
+      },
+      {
+        "group": 1,
+        "agents": [
+          "wpe"
+        ]
+      },
+      {
+        "group": 2,
+        "agents": [
+          "wpf"
+        ]
+      }
+    ],
+    "file_ownership_map": [
+      {
+        "file": "reports/dashboard_server.py",
+        "owner": "wpd"
+      },
+      {
+        "file": "reports/_build_dashboard.py",
+        "owner": "wpd"
+      },
+      {
+        "file": "reports/_render_dashboard.py",
+        "owner": "wpd"
+      },
+      {
+        "file": "reports/README_live_dashboard.md",
+        "owner": "wpd"
+      },
+      {
+        "file": "reports/watch_dashboard.ps1",
+        "owner": "wpd"
+      },
+      {
+        "file": "src/dl_engine/gallery_thumbnails.py",
+        "owner": "wpd"
+      },
+      {
+        "file": "tests/test_gallery_thumbnails.py",
+        "owner": "wpd"
+      },
+      {
+        "file": "tests/test_dashboard_server.py",
+        "owner": "wpd"
+      },
+      {
+        "file": "pyproject.toml",
+        "owner": "wpd"
+      },
+      {
+        "file": "requirements.txt",
+        "owner": "wpd"
+      },
+      {
+        "file": "live-tracker.md",
+        "owner": "wpd"
+      },
+      {
+        "file": "src/dl_engine/index_library.py",
+        "owner": "wpe"
+      },
+      {
+        "file": "src/dl_engine/library_browser.py",
+        "owner": "wpe"
+      },
+      {
+        "file": "tests/test_index_library.py",
+        "owner": "wpe"
+      },
+      {
+        "file": "tests/test_library_browser.py",
+        "owner": "wpe"
+      },
+      {
+        "file": "docs/INDEX_LIBRARY.md",
+        "owner": "wpe"
+      },
+      {
+        "file": "docs/CONTENT_RATING.md",
+        "owner": "wpe"
+      },
+      {
+        "file": "reports/library-browser.html",
+        "owner": "wpf"
+      },
+      {
+        "file": "tests/test_gallery_browser_contract.py",
+        "owner": "wpf"
+      },
+      {
+        "file": "docs/GALLERY_ROADMAP.md",
+        "owner": "wpf"
+      }
+    ],
+    "conflict_zone_analysis": [
+      {
+        "conflict_zone": "Repository source versus explicit runtime collection roots",
+        "affected": "yes",
+        "mitigation": "All report source is in-repository, generated dashboards remain ignored runtime artifacts, and server/index commands require explicit collection, database, environment, queue, and cache paths rather than deriving live state from a worktree parent."
+      },
+      {
+        "conflict_zone": "reports/dashboard_server.py versus reports/_build_dashboard.py and reports/_render_dashboard.py",
+        "affected": "yes",
+        "mitigation": "WPD owns all three source contracts plus the launcher; route changes, sanitized queue status, and media URL generation ship together while generated dashboard HTML remains runtime-only."
+      },
+      {
+        "conflict_zone": "src/dl_engine/index_library.py versus src/dl_engine/library_browser.py",
+        "affected": "yes",
+        "mitigation": "WPE owns both the schema/query implementation and API serialization, with one focused regression boundary for schema version, pagination, autocomplete, and suggestion visibility."
+      },
+      {
+        "conflict_zone": "src/dl_engine/content_rating.py versus materialized rating fields and machine suggestions",
+        "affected": "interface only",
+        "mitigation": "The classifier remains untouched; WPE materializes only its existing output from provider and accepted human evidence, never from pending or rejected model suggestions."
+      },
+      {
+        "conflict_zone": "live-tracker.md sequential campaign updates",
+        "affected": "yes",
+        "mitigation": "WPD is the registered owner. WPE and WPF report exact completion rows in their result payloads; WPF performs the final consolidated tracker update only after WPD and WPE results are preserved."
+      },
+      {
+        "conflict_zone": "pre-existing heavily dirty worktree",
+        "affected": "yes",
+        "mitigation": "Every product file has one registered owner, agents must inspect the pre-task file state and smallest owned diff, and no cleanup, reset, or unrelated formatting is allowed."
+      }
+    ],
+    "integration_points": [
+      "WPD defines the allowlisted /api/library, /api/library/tags, /api/library/suggestions, /thumb/<sha256>, and /original/<image-id> route boundary; WPE supplies the validated library_browser functions and serialized URL fields behind that boundary.",
+      "WPD defines the SHA-keyed thumbnail cache contract and cache-root policy; WPE emits thumbnail_url and original_url without exposing filesystem paths, and WPF uses thumbnails for cards while reserving originals for explicit detail actions.",
+      "WPE migrates the disposable index to schema version 3, materializes rating/tag/facet values, and defines counted autocomplete, deterministic sort, provider coverage, and suggestion-review payloads; WPF consumes only those documented fields.",
+      "WPE preserves provider and sidecar tags as evidence and exposes machine suggestions separately; WPF renders provider tags as navigation and suggestions as confidence/provenance-labelled review items.",
+      "WPF consolidates completion evidence from WPD and WPE into docs/GALLERY_ROADMAP.md and the final live-tracker.md entry after full integration verification."
+    ],
+    "schema_changes": [
+      "Increment disposable SQLite DB_SCHEMA_VERSION from 2 to 3; do not change wallpaper sidecar schema version 1.",
+      "Add images.content_rating TEXT NOT NULL DEFAULT 'unknown', images.rating_confidence REAL NOT NULL DEFAULT 0, images.rating_basis TEXT NOT NULL DEFAULT 'no-signal', images.rating_reasons_json TEXT NOT NULL DEFAULT '[]', and images.tag_count INTEGER NOT NULL DEFAULT 0. Recompute them transactionally after ingest and provider-tag changes.",
+      "Add library_facets(facet TEXT, value TEXT, count INTEGER, refreshed_at TEXT, PRIMARY KEY(facet,value)); refresh it in the same transaction as derived rating/tag-count publication so facet reads are constant-shape and snapshot-consistent.",
+      "Add tag_suggestions(id INTEGER PRIMARY KEY, image_id INTEGER REFERENCES images(id) ON DELETE CASCADE, label TEXT, normalized_label TEXT, confidence REAL, generator TEXT, model_version TEXT, provenance TEXT, review_status TEXT, created_at TEXT, reviewed_at TEXT, reviewer TEXT, decision_note TEXT) with constraints for confidence 0 through 1 and review_status pending, accepted, or rejected plus a deterministic uniqueness key.",
+      "Add indexes for materialized content_rating, tag_count, download_recorded_at, size_bytes, franchise, and the stable sort keys; retain existing source, orientation, bucket, site ID, and image-tag indexes.",
+      "Define a durable provider-enrichment ledger record version for source, source_id, status, typed raw tags, provenance, captured_at, and error. SQLite may import the ledger but never replaces it as provider evidence."
+    ],
+    "risk_assessment": [
+      {
+        "risk": "The analyzer is heuristic-only and may not fully model report/browser contracts or assign all repository files.",
+        "likelihood": "certain",
+        "impact": "medium",
+        "mitigation": "Use only three sequential agents, exact file lists, source-grounded contracts, explicit runtime-root handling, and final full-suite plus live-route verification."
+      },
+      {
+        "risk": "A Git worktree could accidentally infer its parent as the live collection root.",
+        "likelihood": "high",
+        "impact": "high",
+        "mitigation": "Keep report source inside the repository, keep generated output ignored, and require explicit library, database, environment, queue, and cache paths for every live command."
+      },
+      {
+        "risk": "An allowlist breaks the current operations dashboard because it fetches queue state and embeds relative temp/library paths.",
+        "likelihood": "high",
+        "impact": "high",
+        "mitigation": "WPD owns server and generator changes together, adds a sanitized queue-status endpoint and explicit media routes, regenerates the dashboard, and tests every retained control."
+      },
+      {
+        "risk": "Thumbnail decoding consumes excessive CPU or memory, follows a path outside the library, or serves stale content.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Resolve image IDs through SQLite, require canonical-root containment, cap source dimensions and output pixels, verify format, generate atomically, key by SHA-256 plus transform version, and bound concurrent generation."
+      },
+      {
+        "risk": "Schema migration or derived-field refresh mutates the live unverified index incorrectly.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Test migration on copies, gate live writes on VERIFIED SND-HOST identity, preserve sidecars and provider ledgers, use one transaction, run verify-json afterward, and retain rebuild-from-evidence rollback."
+      },
+      {
+        "risk": "Materialized ratings or facets drift after provider enrichment or suggestion review.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Centralize derived refresh, call it from ingest and every authoritative tag mutation, exclude pending/rejected suggestions by construction, and add rebuild-versus-incremental parity tests."
+      },
+      {
+        "risk": "Wallhaven resume still skips out-of-order IDs or provider throttling makes completion look successful.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Select from pending status without a greater-than cursor predicate, ledger every attempt before advancing observability progress, use bounded canaries, retain rate limits, and report remaining rows explicitly."
+      },
+      {
+        "risk": "Sparse Zerochan metadata encourages invented or low-confidence tags.",
+        "likelihood": "high",
+        "impact": "medium",
+        "mitigation": "Accept only captured provider evidence into the provider ledger, show coverage by source, retain one-tag rows as sparse, and route any visual inference to tag_suggestions instead."
+      },
+      {
+        "risk": "The single-file gallery UI regresses infinite scroll, NSFW blur, selection, or transfer behavior.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Preserve existing URL state and transfer contracts, add static JavaScript/accessibility tests, and perform keyboard, pagination, filter, selection, and lightbox smoke checks."
+      },
+      {
+        "risk": "Agents overwrite unrelated changes in the heavily dirty worktree.",
+        "likelihood": "high",
+        "impact": "medium",
+        "mitigation": "Prohibit broad formatting and cleanup, require pre-edit status and smallest owned diff review, and merge only in WPD then WPE then WPF order."
+      }
+    ],
+    "verification_strategy": [
+      "python -m compileall -q src tests",
+      "python -m pytest -q",
+      "python -m pytest -q tests/test_dashboard_server.py tests/test_gallery_thumbnails.py tests/test_index_library.py tests/test_library_browser.py tests/test_gallery_browser_contract.py",
+      "Run loopback HEAD/GET probes proving allowlisted routes succeed and /.wallpaper-download-queue/state.json, /.env, /anime_pictures_config.json, and /wallpaper_library.sqlite are denied without reading sensitive bodies.",
+      "Measure one warm 48-item SFW API response and its thumbnail response bytes on verified SND-HOST; record comparison with the 2026-07-20 baseline.",
+      "git diff --check"
+    ],
+    "documentation_updates": [
+      "Update reports/README_live_dashboard.md for the allowlisted HTTP surface, sanitized live-state route, thumbnail/original routes, cache lifecycle, and rollback.",
+      "Update docs/INDEX_LIBRARY.md and docs/CONTENT_RATING.md for schema migration, materialized gallery fields/facets, provider enrichment ledgers, and the invariant that unknown is not SFW.",
+      "Create docs/GALLERY_ROADMAP.md as the durable six-point roadmap, including implementation order, live verification gates, provider coverage measures, and the review-only visual suggestion boundary."
+    ],
+    "cost_estimate": {
+      "tiered_usd": 2.7,
+      "max_usd": 2.7,
+      "savings_usd": 0.0,
+      "savings_pct": 0.0
+    }
+  },
+  "analysis_summary": {
+    "total_files": 175,
+    "total_lines": 54673,
+    "conflict_zones": [],
+    "modules": {
+      "analysis": 3075,
+      "diagnostics": 617,
+      "core": 2836,
+      "task_runtime": 4870,
+      "src": 9449,
+      "tests": 11152,
+      "other": 11632,
+      "weblink": 503,
+      "agents": 521,
+      "docs": 9893,
+      "schemas": 125
+    },
+    "detected_stacks": [],
+    "project_graph": {
+      "nodes": [],
+      "edges": []
+    },
+    "analysis_schema_version": 3,
+    "analysis_providers": [
+      "basic"
+    ],
+    "analysis_health": {
+      "mode": "auto",
+      "requested_providers": [
+        "basic",
+        "dotnet-cli"
+      ],
+      "applied_providers": [
+        "basic"
+      ],
+      "skipped_providers": [
+        {
+          "name": "dotnet-cli",
+          "reason": "no-dotnet-projects"
+        }
+      ],
+      "partial_analysis": true,
+      "fallback_only": true,
+      "heuristic_only": true,
+      "confidence": "low",
+      "warnings": [
+        "Optional analysis providers did not contribute; planning data is heuristic-only.",
+        "Unassigned files remain in the analysis inventory."
+      ]
+    },
+    "planning_context": {
+      "analysis_health": {
+        "mode": "auto",
+        "requested_providers": [
+          "basic",
+          "dotnet-cli"
+        ],
+        "applied_providers": [
+          "basic"
+        ],
+        "skipped_providers": [
+          {
+            "name": "dotnet-cli",
+            "reason": "no-dotnet-projects"
+          }
+        ],
+        "partial_analysis": true,
+        "fallback_only": true,
+        "heuristic_only": true,
+        "confidence": "low",
+        "warnings": [
+          "Optional analysis providers did not contribute; planning data is heuristic-only.",
+          "Unassigned files remain in the analysis inventory."
+        ]
+      },
+      "detected_stacks": [],
+      "project_graph": {
+        "nodes": [],
+        "edges": []
+      },
+      "conflict_zones": [],
+      "ui_surfaces": [],
+      "ownership_summary": {
+        "project_count": 0,
+        "assigned_file_count": 0,
+        "assigned_line_count": 0,
+        "unassigned_file_count": 175,
+        "unassigned_paths": [
+          ".Codex/skills/planning-contract.md",
+          ".Codex/skills/project.toml",
+          ".claude/CLAUDE.md",
+          ".claude/mcp_config.json",
+          ".continue/rules/project-conventions.md",
+          ".sequence_state.json",
+          ".vscode/settings.json",
+          "CLAUDE.md",
+          "README.md",
+          "agents/agent-wpa-verify-canonical-library.md",
+          "agents/agent-wpb-orchestrate-safe-finalization.md",
+          "agents/agent-wpc-wire-queue-maintenance.md",
+          "data/analysis-cache.json",
+          "data/plans/plan-001.json",
+          "data/tasks.json",
+          "docs/ANIME_PICTURES.md",
+          "docs/ANIME_PICTURES_FULL_SIZE_2026-07-11.md",
+          "docs/ARCHITECTURE.md",
+          "docs/BREASTS_URL_WORKING_2026-07-09.md",
+          "docs/COMMAND_REFERENCE.md",
+          "docs/COMPREHENSIVE_GUIDE.md",
+          "docs/CONTENT_RATING.md",
+          "docs/DEVELOPMENT_GUIDE.md",
+          "docs/DOWNLOAD_GUIDE.md",
+          "docs/DOWNLOAD_TIPS.md",
+          "docs/HANDOFF.md",
+          "docs/INDEX_LIBRARY.md",
+          "docs/INSTALLATION.md",
+          "docs/REMOTE_TASK_RUNNER.md",
+          "docs/REPO_BOUNDARY.md",
+          "docs/SCHEDULED_DOWNLOAD_QUEUE.md",
+          "docs/USAGE_TIPS.md",
+          "docs/WALLPAPER_METADATA.md",
+          "docs/WEBLINK_QUEUE.md",
+          "docs/WSL_ANIME_PICTURES_BATCH_2026-07-09.md",
+          "docs/archive/ANIME_PICTURES_FIX_2026-07-09.md",
+          "docs/archive/FALLBACK_COMPLETE.md",
+          "docs/archive/FALLBACK_FEATURES.md",
+          "docs/archive/FIXES_APPLIED.md",
+          "docs/archive/HANDOFF.md",
+          "docs/archive/OPENSIDECAR_2026-07-09.md",
+          "docs/archive/SESSION_SUMMARY.md",
+          "docs/archive/audit_plan.md",
+          "docs/archive/imported-root/CHEATSHEET.root.md",
+          "docs/archive/imported-root/CHEATSHEET_live.root.md",
+          "docs/archive/imported-root/DOWNLOAD_GUIDE.root.md",
+          "docs/archive/imported-root/DOWNLOAD_TIPS.root.md",
+          "docs/archive/imported-root/README.root.md",
+          "docs/archive/imported-root/USAGE_TIPS.root.md",
+          "docs/campaign-plan-001-automate-safe-wallpaper-intake.md",
+          "docs/discovery-anime-request-elimination.md",
+          "docs/discovery-anime-url-dedupe.md",
+          "docs/discovery-bulk-sort-readiness.md",
+          "docs/discovery-document-link-readiness.md",
+          "docs/discovery-download-queue-quota.md",
+          "docs/discovery-format-logging-readiness.md",
+          "docs/discovery-gallery-sorting-presentation.md",
+          "docs/discovery-picture-category-navigation.md",
+          "docs/discovery-queue-capacity-review.md",
+          "docs/discovery-sort-everything-current.md",
+          "docs/discovery-sorting-tag-pipeline.md",
+          "docs/discovery-task-continuation.md",
+          "docs/discovery-three-site-ingest-audit.md",
+          "docs/reviews/review-2026-07-09-downloader-surface.md",
+          "docs/reviews/review-2026-07-11-anime-pictures-once-help.md",
+          "docs/reviews/review-2026-07-11-script-duplication-refinement.md",
+          "docs/reviews/review-2026-07-11-sort-queue-dedupe.md",
+          "docs/temp.md",
+          "docs/test.md",
+          "live-tracker.md",
+          "pyproject.toml",
+          "schemas/wallpaper-metadata.schema.json",
+          "scripts/Import-WallpaperLinks.ps1",
+          "scripts/Install-WallpaperDownloadQueueTask.ps1",
+          "scripts/Merge-WallpaperUrlQueue.ps1",
+          "scripts/analysis/__init__.py",
+          "scripts/analysis/basic_provider.py",
+          "scripts/analysis/derived.py",
+          "scripts/analysis/dotnet_cli_provider.py",
+          "scripts/analysis/engine.py",
+          "scripts/analysis/inventory.py",
+          "scripts/analysis/models.py",
+          "scripts/analysis/planning_context.py",
+          "scripts/analysis/project_graph.py",
+          "scripts/analysis/relations.py",
+          "scripts/analysis/signals.py",
+          "scripts/anime-pictures-once.ps1",
+          "scripts/diagnostics/README.md",
+          "scripts/diagnostics/_analyze_smoke.ps1",
+          "scripts/diagnostics/_analyze_smoke.py",
+          "scripts/diagnostics/_archive_already_downloaded.ps1",
+          "scripts/diagnostics/_chrome_status.ps1",
+          "scripts/diagnostics/_downloads_status.ps1",
+          "scripts/diagnostics/_kill_again.ps1",
+          "scripts/diagnostics/_kill_runaway.ps1",
+          "scripts/diagnostics/_launch_30missing.ps1",
+          "scripts/diagnostics/_peek_one.ps1",
+          "scripts/diagnostics/_peek_sidecars.ps1",
+          "scripts/diagnostics/_probe_syntax_check.ps1",
+          "scripts/diagnostics/_read_lines.ps1",
+          "scripts/diagnostics/_read_probe.ps1",
+          "scripts/diagnostics/_smoke_status.ps1",
+          "scripts/diagnostics/_tail_launch_log.ps1",
+          "scripts/diagnostics/count-images.ps1",
+          "scripts/diagnostics/dl-cheatsheet.ps1",
+          "scripts/diagnostics/legacy-4kwallpapers-scrape.ps1",
+          "scripts/diagnostics/smoke-inspect.ps1",
+          "scripts/remote-task-status.json",
+          "scripts/remote-wallpaper-tasks.json",
+          "scripts/run-remote-tasks.ps1",
+          "scripts/sort-by-orientation.ps1",
+          "scripts/sort-downloads.ps1",
+          "scripts/sort.ps1",
+          "scripts/task_manager.py",
+          "scripts/task_runtime/__init__.py",
+          "scripts/task_runtime/artifacts.py",
+          "scripts/task_runtime/bootstrap.py",
+          "scripts/task_runtime/commands.py",
+          "scripts/task_runtime/config.py",
+          "scripts/task_runtime/execution.py",
+          "scripts/task_runtime/merge.py",
+          "scripts/task_runtime/orchestration.py",
+          "scripts/task_runtime/plans.py",
+          "scripts/task_runtime/result.py",
+          "scripts/task_runtime/specs.py",
+          "scripts/task_runtime/state.py",
+          "scripts/task_runtime/telemetry.py",
+          "scripts/task_runtime/validation.py",
+          "scripts/task_runtime/verify.py",
+          "scripts/wallpaper-download-queue.ps1",
+          "scripts/wallpaper-ingest.ps1",
+          "scripts/wallpaper-library-maintenance.ps1",
+          "scripts/wallpaper-open-sidecar.ps1",
+          "scripts/weblink/Open-UrlShortcutsInChromeApps.ps1",
+          "smoke_status.json",
+          "src/dl_engine/__init__.py",
+          "src/dl_engine/anime_pictures.py",
+          "src/dl_engine/auth_config.py",
+          "src/dl_engine/common_utils.py",
+          "src/dl_engine/content_rating.py",
+          "src/dl_engine/download_interactive.py",
+          "src/dl_engine/download_wallpapers.py",
+          "src/dl_engine/index_library.py",
+          "src/dl_engine/library_browser.py",
+          "src/dl_engine/library_transfer.py",
+          "src/dl_engine/pda.py",
+          "src/dl_engine/wallpaper_metadata.py",
+          "src/dl_engine/zerochan_popular.py",
+          "src/inspector.html",
+          "tests/fixtures/ap_listing.html",
+          "tests/fixtures/ap_post.html",
+          "tests/powershell/Merge-WallpaperUrlQueue.Tests.ps1",
+          "tests/powershell/Open-UrlShortcutsInChromeApps.Tests.ps1",
+          "tests/powershell/SortByOrientation.Tests.ps1",
+          "tests/powershell/SortDownloads.Tests.ps1",
+          "tests/powershell/TestAssertions.ps1",
+          "tests/powershell/WallpaperDownloadQueue.Tests.ps1",
+          "tests/powershell/WallpaperIngest.Tests.ps1",
+          "tests/powershell/WallpaperLibraryMaintenance.Tests.ps1",
+          "tests/powershell/WallpaperLinkImport.Tests.ps1",
+          "tests/powershell/WallpaperSidecars.Tests.ps1",
+          "tests/test_anime_pictures.py",
+          "tests/test_auth_config.py",
+          "tests/test_common_utils.py",
+          "tests/test_content_rating.py",
+          "tests/test_download_interactive.py",
+          "tests/test_download_wallpapers.py",
+          "tests/test_index_library.py",
+          "tests/test_library_browser.py",
+          "tests/test_library_transfer.py",
+          "tests/test_oneclick_sidecars.py",
+          "tests/test_package_surface.py",
+          "tests/test_pda.py",
+          "tests/test_wallpaper_metadata.py",
+          "tests/test_zerochan_popular.py"
+        ],
+        "projects": []
+      },
+      "priority_projects": {
+        "startup": [],
+        "packaging": []
+      },
+      "coordination_hotspots": []
+    }
+  },
+  "backfill_reasons": [],
+  "approved_at": "2026-07-20T00:03:37+00:00",
+  "executed_at": null,
+  "updated_at": "2026-07-20T01:12:10+00:00"
+}

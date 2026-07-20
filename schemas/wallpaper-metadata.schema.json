@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.wallpapers/schemas/wallpaper-metadata-v1.json",
+  "title": "Wallpaper metadata v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source",
+    "source_id",
+    "source_url",
+    "original_filename",
+    "canonical_filename",
+    "slug",
+    "file",
+    "classification",
+    "download",
+    "tags",
+    "search_origins"
+  ],
+  "oneOf": [
+    {
+      "properties": {
+        "file": {
+          "properties": {
+            "width": { "const": 0 },
+            "height": { "const": 0 }
+          }
+        },
+        "classification": {
+          "properties": {
+            "resolution_bucket": { "const": "_UnknownResolution" },
+            "orientation": { "const": "unknown" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "file": {
+          "properties": {
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "classification": {
+          "properties": {
+            "resolution_bucket": { "not": { "const": "_UnknownResolution" } },
+            "orientation": { "enum": ["landscape", "portrait", "square"] }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "source": {
+      "enum": ["wallhaven", "zerochan", "anime-pictures", "unknown"]
+    },
+    "source_id": { "type": "string", "minLength": 1 },
+    "source_url": { "type": ["string", "null"], "minLength": 1 },
+    "original_filename": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/\\\\]+$"
+    },
+    "canonical_filename": {
+      "type": "string",
+      "pattern": "^src=(wallhaven|zerochan|anime-pictures|unknown)__id=[A-Za-z0-9][A-Za-z0-9._-]*__size=[0-9]+x[0-9]+__slug=[a-z0-9]+(?:-[a-z0-9]+)*(?:__sha=[0-9a-f]{12})?\\.[a-z0-9]+$"
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "size_bytes", "extension", "width", "height"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "extension": { "type": "string", "pattern": "^\\.[a-z0-9]+$" },
+        "width": { "type": "integer", "minimum": 0 },
+        "height": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resolution_bucket", "orientation"],
+      "properties": {
+        "resolution_bucket": { "enum": ["4K", "1440p", "1080p", "720p", "SD", "_UnknownResolution"] },
+        "orientation": { "enum": ["landscape", "portrait", "square", "unknown"] }
+      }
+    },
+    "download": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transport", "source_relative_path", "recorded_at"],
+      "properties": {
+        "transport": { "type": "string", "minLength": 1 },
+        "source_relative_path": { "type": "string", "minLength": 1 },
+        "recorded_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "slug", "type", "provenance"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+          "type": { "type": "string", "minLength": 1 },
+          "provenance": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "search_origins": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

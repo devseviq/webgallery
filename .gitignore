@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Local execution state
+.env
+.env.*
+!.env.example
+.agents/
+data/tasks.json
+data/analysis-cache.json
+*.log
+*.pid
+*.lock
+*.bak
+*.bak-*
+
+# Databases and durable/live state
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.jsonl
+.wallpaper-download-queue/
+.wallpaper-library-maintenance/
+.wallpaper-transfer-targets.json
+anime_pictures_config.json
+zerochan_config.json
+pda_config.json
+
+# Generated gallery/runtime artifacts
+reports/_snapshot.json
+reports/download-queue-dashboard.html
+reports/dashboard.html
+reports/*.csv
+reports/*.err
+reports/*.out
+reports/maintenance-*/
+reports/archive/
+thumbnail-cache/
+thumb-cache/
+
+# Wallpaper payloads and sidecars never belong in Git
+library/
+temp_downloads/
+*.wallpaper.json
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.avif
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.heic
+*.url
+*.crdownload
+
+# Editor / OS
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
