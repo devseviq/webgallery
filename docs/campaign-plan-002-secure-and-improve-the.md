@@ -2,7 +2,7 @@
 
 **Plan ID:** plan-002
 **Date:** 2026-07-19
-**Status:** approved
+**Status:** executed
 **Plan file:** data/plans/plan-002.json
 **Plan doc:** docs/campaign-plan-002-secure-and-improve-the.md
 **Planner kind:** planner
