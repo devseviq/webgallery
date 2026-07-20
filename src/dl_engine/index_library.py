@@ -62,6 +62,7 @@ import csv
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -75,12 +76,13 @@ import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from collections.abc import Iterable, Mapping
+from typing import Optional, Sequence
 
 from .content_rating import (
     CONTENT_RATINGS,
-    ContentRating,
     classify_content,
+    normalize_label,
     register_sqlite_function as register_content_rating_sqlite_function,
 )
 from .wallpaper_metadata import (
@@ -97,14 +99,7 @@ logger = logging.getLogger(__name__)
 # Paths and tunables
 # ---------------------------------------------------------------------------
 
-PACKAGE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = PACKAGE_DIR.parent.parent
-WALLPAPERS_ROOT = REPO_ROOT.parent
-
-DEFAULT_LIBRARY_ROOT = WALLPAPERS_ROOT / "library"
-DEFAULT_DB_PATH = WALLPAPERS_ROOT / "wallpaper_library.sqlite"
-DEFAULT_ENV_PATH = REPO_ROOT / ".env"
-DB_SCHEMA_VERSION = 2
+DB_SCHEMA_VERSION = 3
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 SQLITE_JOURNAL_MODE = "wal"
 
@@ -120,6 +115,8 @@ _VERIFY_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
             "source_url", "original_filename", "canonical_filename", "slug",
             "sha256", "size_bytes", "transport", "source_relative_path",
             "download_recorded_at", "search_origins_json",
+            "content_rating", "rating_confidence", "rating_basis",
+            "rating_reasons_json", "tag_count",
         }
     ),
     "tags": frozenset(
@@ -135,6 +132,16 @@ _VERIFY_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
         {"source", "last_processed_source_site_id", "updated_at"}
     ),
     "schema_metadata": frozenset({"key", "value"}),
+    "library_facets": frozenset(
+        {"facet", "value", "count", "refreshed_at"}
+    ),
+    "tag_suggestions": frozenset(
+        {
+            "id", "image_id", "label", "normalized_label", "confidence",
+            "generator", "model_version", "provenance", "review_status",
+            "created_at", "reviewed_at", "reviewer", "decision_note",
+        }
+    ),
 }
 
 _VERIFY_INCOMPATIBLE_CODES = frozenset(
@@ -148,6 +155,15 @@ WALLHAVEN_LEDGER_PROVENANCE = "wallhaven-api"
 WALLHAVEN_LEDGER_RELATIVE_PATH = (
     Path("_metadata") / "wallhaven-enrichment.v1.jsonl"
 )
+
+PROVIDER_LEDGER_SCHEMA_VERSION = 1
+PROVIDER_LEDGER_RECORD_TYPE = "provider-enrichment"
+PROVIDER_LEDGER_RELATIVE_PATH = (
+    Path("_metadata") / "provider-enrichment.v1.jsonl"
+)
+PROVIDER_LEDGER_SOURCES = frozenset({"zerochan", "anime-pictures"})
+SUGGESTION_REVIEW_STATUSES = frozenset({"pending", "accepted", "rejected"})
+PROVIDER_LEDGER_STATUSES = frozenset({"pending", "ok", "skipped", "failed"})
 
 # Resolution buckets, mirroring sort-downloads.ps1. The long side determines
 # the bucket so a portrait 2160x3840 still counts as 4K.
@@ -230,7 +246,14 @@ CREATE TABLE IF NOT EXISTS images (
     transport          TEXT,
     source_relative_path TEXT,
     download_recorded_at TEXT,
-    search_origins_json TEXT NOT NULL DEFAULT '[]'
+    search_origins_json TEXT NOT NULL DEFAULT '[]',
+    content_rating     TEXT NOT NULL DEFAULT 'unknown'
+                       CHECK(content_rating IN ('sfw','suggestive','nsfw','unknown')),
+    rating_confidence  REAL NOT NULL DEFAULT 0
+                       CHECK(rating_confidence >= 0 AND rating_confidence <= 1),
+    rating_basis       TEXT NOT NULL DEFAULT 'no-signal',
+    rating_reasons_json TEXT NOT NULL DEFAULT '[]',
+    tag_count          INTEGER NOT NULL DEFAULT 0 CHECK(tag_count >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS tags (
@@ -262,11 +285,39 @@ CREATE TABLE IF NOT EXISTS schema_metadata (
     value  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS library_facets (
+    facet        TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    count        INTEGER NOT NULL CHECK(count >= 0),
+    refreshed_at TEXT NOT NULL,
+    PRIMARY KEY (facet, value)
+);
+
+CREATE TABLE IF NOT EXISTS tag_suggestions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    image_id         INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+    label            TEXT NOT NULL CHECK(LENGTH(TRIM(label)) > 0),
+    normalized_label TEXT NOT NULL CHECK(LENGTH(TRIM(normalized_label)) > 0),
+    confidence       REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+    generator        TEXT NOT NULL CHECK(LENGTH(TRIM(generator)) > 0),
+    model_version    TEXT NOT NULL CHECK(LENGTH(TRIM(model_version)) > 0),
+    provenance       TEXT NOT NULL CHECK(LENGTH(TRIM(provenance)) > 0),
+    review_status    TEXT NOT NULL DEFAULT 'pending'
+                     CHECK(review_status IN ('pending','accepted','rejected')),
+    created_at       TEXT NOT NULL,
+    reviewed_at      TEXT,
+    reviewer         TEXT,
+    decision_note    TEXT,
+    UNIQUE (image_id, normalized_label, generator, model_version)
+);
+
 CREATE INDEX IF NOT EXISTS idx_images_source      ON images(source);
 CREATE INDEX IF NOT EXISTS idx_images_orientation ON images(orientation);
 CREATE INDEX IF NOT EXISTS idx_images_bucket      ON images(resolution_bucket);
 CREATE INDEX IF NOT EXISTS idx_images_site_id     ON images(source_site_id);
 CREATE INDEX IF NOT EXISTS idx_image_tags_tag     ON image_tags(tag_id);
+CREATE INDEX IF NOT EXISTS idx_tag_suggestions_page
+    ON tag_suggestions(image_id, review_status, normalized_label, id);
 """
 
 
@@ -644,7 +695,24 @@ def _ensure_column(
 
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
-    """Apply additive migrations from the legacy index to schema version 2."""
+    """Apply additive, idempotent migrations through schema version 3."""
+    previous_user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    existing_image_columns = _table_columns(conn, "images")
+    existing_tag_columns = _table_columns(conn, "tags")
+    needs_tag_identity_migration = (
+        previous_user_version < 2
+        or not {"source", "tag_type", "provenance"}.issubset(
+            existing_tag_columns
+        )
+    )
+    derived_columns = {
+        "content_rating", "rating_confidence", "rating_basis",
+        "rating_reasons_json", "tag_count",
+    }
+    needs_derived_backfill = (
+        previous_user_version < DB_SCHEMA_VERSION
+        or not derived_columns.issubset(existing_image_columns)
+    )
     image_columns = {
         "metadata_path": "TEXT",
         "source_url": "TEXT",
@@ -657,6 +725,17 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         "source_relative_path": "TEXT",
         "download_recorded_at": "TEXT",
         "search_origins_json": "TEXT NOT NULL DEFAULT '[]'",
+        "content_rating": (
+            "TEXT NOT NULL DEFAULT 'unknown' "
+            "CHECK(content_rating IN ('sfw','suggestive','nsfw','unknown'))"
+        ),
+        "rating_confidence": (
+            "REAL NOT NULL DEFAULT 0 "
+            "CHECK(rating_confidence >= 0 AND rating_confidence <= 1)"
+        ),
+        "rating_basis": "TEXT NOT NULL DEFAULT 'no-signal'",
+        "rating_reasons_json": "TEXT NOT NULL DEFAULT '[]'",
+        "tag_count": "INTEGER NOT NULL DEFAULT 0 CHECK(tag_count >= 0)",
     }
     for name, declaration in image_columns.items():
         _ensure_column(conn, "images", name, declaration)
@@ -679,7 +758,8 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "UPDATE images SET source='anime-pictures' WHERE source='anime_pictures'"
     )
-    _migrate_legacy_tag_ids(conn)
+    if needs_tag_identity_migration:
+        _migrate_legacy_tag_ids(conn)
     conn.execute("DROP INDEX IF EXISTS idx_tags_source_name")
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_source_name_type "
@@ -690,6 +770,29 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_images_source_identity "
         "ON images(source, source_site_id)"
     )
+    index_statements = (
+        "CREATE INDEX IF NOT EXISTS idx_images_content_rating "
+        "ON images(content_rating, id)",
+        "CREATE INDEX IF NOT EXISTS idx_images_tag_count "
+        "ON images(tag_count, download_recorded_at DESC, id DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_images_download_recorded_at "
+        "ON images(download_recorded_at DESC, id DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_images_size_bytes "
+        "ON images(size_bytes DESC, id)",
+        "CREATE INDEX IF NOT EXISTS idx_images_franchise "
+        "ON images(franchise COLLATE NOCASE, id)",
+        "CREATE INDEX IF NOT EXISTS idx_images_rating_confidence "
+        "ON images(rating_confidence, tag_count, id)",
+        "CREATE INDEX IF NOT EXISTS idx_image_tags_image "
+        "ON image_tags(image_id, tag_id)",
+        "CREATE INDEX IF NOT EXISTS idx_tag_suggestions_page "
+        "ON tag_suggestions(image_id, review_status, normalized_label, id)",
+    )
+    for statement in index_statements:
+        conn.execute(statement)
+
+    if needs_derived_backfill:
+        refresh_derived_metadata(conn)
     conn.execute(
         "INSERT INTO schema_metadata(key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -757,6 +860,69 @@ def _migrate_legacy_tag_ids(conn: sqlite3.Connection) -> None:
     )
 
 
+def _seeded_rank(image_id: object, seed: object) -> int:
+    """Return a deterministic positive SQLite integer for shuffle ordering."""
+    payload = f"{int(seed)}\0{int(image_id)}".encode("ascii")
+    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big") & (
+        (1 << 63) - 1
+    )
+
+
+def _register_index_sqlite_functions(conn: sqlite3.Connection) -> None:
+    register_content_rating_sqlite_function(conn)
+    conn.create_function(
+        "wallpaper_seed_rank", 2, _seeded_rank, deterministic=True,
+    )
+
+
+def _preflight_writable_schema(conn: sqlite3.Connection) -> None:
+    """Reject future or contradictory schemas before making any DB change."""
+    user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    tables = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    metadata_version: Optional[int] = None
+    if "schema_metadata" in tables:
+        columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(schema_metadata)")
+        }
+        if not {"key", "value"}.issubset(columns):
+            raise ValueError("schema_metadata table is structurally incompatible")
+        row = conn.execute(
+            "SELECT value FROM schema_metadata WHERE key='schema_version'"
+        ).fetchone()
+        if row is not None:
+            try:
+                metadata_version = int(str(row[0]))
+            except ValueError as exc:
+                raise ValueError(
+                    "schema_metadata.schema_version is not an integer"
+                ) from exc
+    for label, version in (
+        ("PRAGMA user_version", user_version),
+        ("schema_metadata.schema_version", metadata_version),
+    ):
+        if version is not None and version > DB_SCHEMA_VERSION:
+            raise ValueError(
+                f"{label}={version} is newer than supported schema "
+                f"{DB_SCHEMA_VERSION}"
+            )
+        if version is not None and version < 0:
+            raise ValueError(f"{label}={version} is invalid")
+    if metadata_version is not None and metadata_version != user_version:
+        raise ValueError(
+            "schema version markers disagree: "
+            f"user_version={user_version}, metadata={metadata_version}"
+        )
+    if user_version in {2, DB_SCHEMA_VERSION} and metadata_version is None:
+        raise ValueError(
+            f"schema version {user_version} requires schema_metadata marker"
+        )
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
     """Open (creating if needed) the index DB and ensure the schema exists.
 
@@ -775,6 +941,8 @@ def connect(db_path: Path) -> sqlite3.Connection:
     try:
         conn.row_factory = sqlite3.Row
         conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+        conn.execute("PRAGMA foreign_keys = ON")
+        _preflight_writable_schema(conn)
         journal_mode = conn.execute(
             f"PRAGMA journal_mode = {SQLITE_JOURNAL_MODE}"
         ).fetchone()[0]
@@ -783,12 +951,12 @@ def connect(db_path: Path) -> sqlite3.Connection:
                 f"SQLite refused journal_mode={SQLITE_JOURNAL_MODE}: {journal_mode}"
             )
         conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA foreign_keys = ON")
-        register_content_rating_sqlite_function(conn)
-        conn.executescript(_SCHEMA_SQL)
+        _register_index_sqlite_functions(conn)
+        conn.executescript("BEGIN IMMEDIATE;\n" + _SCHEMA_SQL)
         _migrate_schema(conn)
         conn.commit()
     except Exception:
+        conn.rollback()
         conn.close()
         raise
     return conn
@@ -803,6 +971,83 @@ class IndexedTag:
     type: str
     provenance: str
     source: str
+
+
+@dataclass(frozen=True)
+class TagSuggestion:
+    """Review-only visual tag evidence; never an authoritative image tag."""
+
+    id: int
+    image_id: int
+    label: str
+    normalized_label: str
+    confidence: float
+    generator: str
+    model_version: str
+    provenance: str
+    review_status: str
+    created_at: str
+    reviewed_at: Optional[str]
+    reviewer: Optional[str]
+    decision_note: Optional[str]
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "TagSuggestion":
+        return cls(
+            id=int(row["id"]), image_id=int(row["image_id"]),
+            label=str(row["label"]),
+            normalized_label=str(row["normalized_label"]),
+            confidence=float(row["confidence"]),
+            generator=str(row["generator"]),
+            model_version=str(row["model_version"]),
+            provenance=str(row["provenance"]),
+            review_status=str(row["review_status"]),
+            created_at=str(row["created_at"]),
+            reviewed_at=row["reviewed_at"], reviewer=row["reviewer"],
+            decision_note=row["decision_note"],
+        )
+
+
+@dataclass(frozen=True)
+class TagAutocompleteResult:
+    name: str
+    type: str
+    provenance: str
+    source: str
+    image_count: int
+
+
+@dataclass(frozen=True)
+class FacetCount:
+    value: str
+    count: int
+    refreshed_at: str
+
+
+@dataclass(frozen=True)
+class DerivedRefreshResult:
+    images: int
+    facets: int
+
+
+class MaterializedContentRating(str):
+    """String-compatible materialized rating with legacy explanation access."""
+
+    rating: str
+    confidence: float
+    basis: str
+    reasons: tuple[str, ...]
+
+    def __new__(
+        cls, rating: str, confidence: float, basis: str,
+        reasons: Iterable[str] = (),
+    ) -> "MaterializedContentRating":
+        instance = str.__new__(cls, rating)
+        instance.rating = rating
+        instance.confidence = float(confidence)
+        instance.basis = basis
+        instance.reasons = tuple(reasons)
+        return instance
 
 
 @dataclass(frozen=True)
@@ -833,23 +1078,33 @@ class ImageRow:
     source_relative_path: Optional[str]
     download_recorded_at: Optional[str]
     search_origins: tuple[str, ...]
+    content_rating: MaterializedContentRating
+    rating_confidence: float
+    rating_basis: str
+    rating_reasons: tuple[str, ...]
+    tag_count: int
     tags: tuple[IndexedTag, ...]
-
-    @property
-    def content_rating(self) -> ContentRating:
-        """Return the conservative derived rating for this indexed image."""
-
-        return classify_content(self.purity, self.tags)
+    tag_suggestions: tuple[TagSuggestion, ...]
 
     @classmethod
     def from_row(
         cls, row: sqlite3.Row, tags: Iterable[IndexedTag] = (),
+        suggestions: Iterable[TagSuggestion] = (),
     ) -> "ImageRow":
         try:
             origins_value = json.loads(row["search_origins_json"] or "[]")
         except (json.JSONDecodeError, TypeError):
             origins_value = []
         origins = tuple(v for v in origins_value if isinstance(v, str))
+        try:
+            reasons_value = json.loads(row["rating_reasons_json"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            reasons_value = []
+        reasons = tuple(v for v in reasons_value if isinstance(v, str))
+        materialized_rating = MaterializedContentRating(
+            str(row["content_rating"]), float(row["rating_confidence"]),
+            str(row["rating_basis"]), reasons,
+        )
         return cls(
             id=row["id"],
             path=row["path"],
@@ -875,7 +1130,13 @@ class ImageRow:
             source_relative_path=row["source_relative_path"],
             download_recorded_at=row["download_recorded_at"],
             search_origins=origins,
+            content_rating=materialized_rating,
+            rating_confidence=materialized_rating.confidence,
+            rating_basis=materialized_rating.basis,
+            rating_reasons=materialized_rating.reasons,
+            tag_count=int(row["tag_count"]),
             tags=tuple(tags),
+            tag_suggestions=tuple(suggestions),
         )
 
 
@@ -883,9 +1144,377 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _validated_image_ids(image_ids: Iterable[int]) -> tuple[int, ...]:
+    values: set[int] = set()
+    for value in image_ids:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("image IDs must be positive integers")
+        values.add(value)
+    return tuple(sorted(values))
+
+
+def _id_chunks(image_ids: tuple[int, ...], size: int = 900) -> Iterable[tuple[int, ...]]:
+    for start in range(0, len(image_ids), size):
+        yield image_ids[start:start + size]
+
+
+def _refresh_library_facets(conn: sqlite3.Connection, refreshed_at: str) -> int:
+    """Replace all small global facet rows inside the caller's transaction."""
+    conn.execute("DELETE FROM library_facets")
+    direct_facets = (
+        ("content_rating", "content_rating"),
+        ("source", "source"),
+        ("orientation", "COALESCE(NULLIF(TRIM(orientation), ''), 'unknown')"),
+        (
+            "resolution_bucket",
+            "COALESCE(NULLIF(TRIM(resolution_bucket), ''), 'unknown')",
+        ),
+        ("enrichment_status", "enrichment_status"),
+    )
+    for facet, expression in direct_facets:
+        conn.execute(
+            "INSERT INTO library_facets(facet, value, count, refreshed_at) "
+            f"SELECT ?, {expression}, COUNT(*), ? FROM images "
+            f"GROUP BY {expression}",
+            (facet, refreshed_at),
+        )
+    tag_bucket = (
+        "CASE WHEN tag_count=0 THEN '0' WHEN tag_count=1 THEN '1' "
+        "WHEN tag_count BETWEEN 2 AND 4 THEN '2-4' "
+        "WHEN tag_count BETWEEN 5 AND 9 THEN '5-9' ELSE '10+' END"
+    )
+    conn.execute(
+        "INSERT INTO library_facets(facet, value, count, refreshed_at) "
+        f"SELECT 'tag_count_bucket', {tag_bucket}, COUNT(*), ? FROM images "
+        f"GROUP BY {tag_bucket}",
+        (refreshed_at,),
+    )
+    conn.execute(
+        "INSERT INTO library_facets(facet, value, count, refreshed_at) "
+        "SELECT 'provider_coverage', source || '|' || enrichment_status, "
+        "COUNT(*), ? FROM images GROUP BY source, enrichment_status",
+        (refreshed_at,),
+    )
+    conn.execute(
+        "INSERT INTO library_facets(facet, value, count, refreshed_at) "
+        "SELECT 'tag_provenance', "
+        "COALESCE(t.source, i.source) || '|' || "
+        "COALESCE(it.provenance, t.provenance, 'unknown'), "
+        "COUNT(DISTINCT it.image_id), ? "
+        "FROM image_tags it JOIN images i ON i.id=it.image_id "
+        "JOIN tags t ON t.id=it.tag_id "
+        "GROUP BY COALESCE(t.source, i.source), "
+        "COALESCE(it.provenance, t.provenance, 'unknown')",
+        (refreshed_at,),
+    )
+    return int(conn.execute("SELECT COUNT(*) FROM library_facets").fetchone()[0])
+
+
+def refresh_derived_metadata(
+    conn: sqlite3.Connection,
+    image_ids: Optional[Iterable[int]] = None,
+    *,
+    refresh_facets: bool = True,
+) -> DerivedRefreshResult:
+    """Materialize ratings/tag counts from authoritative tags only.
+
+    The function participates in the caller's transaction and never commits.
+    ``tag_suggestions`` is intentionally absent from every read in this path.
+    """
+    bounded_ids = None if image_ids is None else _validated_image_ids(image_ids)
+    conn.execute("SAVEPOINT refresh_derived_metadata")
+    try:
+        if bounded_ids is None:
+            image_rows = conn.execute(
+                "SELECT id, purity FROM images ORDER BY id"
+            ).fetchall()
+        elif not bounded_ids:
+            image_rows = []
+        else:
+            image_rows = []
+            for chunk in _id_chunks(bounded_ids):
+                placeholders = ",".join("?" for _ in chunk)
+                image_rows.extend(
+                    conn.execute(
+                        f"SELECT id, purity FROM images WHERE id IN ({placeholders}) "
+                        "ORDER BY id",
+                        chunk,
+                    ).fetchall()
+                )
+
+        selected_ids = tuple(int(row["id"]) for row in image_rows)
+        tags_by_image: dict[int, list[dict[str, str]]] = {
+            image_id: [] for image_id in selected_ids
+        }
+        if bounded_ids is None:
+            tag_rows = conn.execute(
+                "SELECT it.image_id, t.name, t.tag_type, t.category, "
+                "COALESCE(it.provenance, t.provenance, 'unknown') AS provenance "
+                "FROM image_tags it JOIN tags t ON t.id=it.tag_id "
+                "ORDER BY it.image_id, t.name COLLATE NOCASE, t.name, "
+                "COALESCE(t.tag_type, t.category, 'unknown') COLLATE NOCASE, t.id"
+            ).fetchall()
+        else:
+            tag_rows = []
+            for chunk in _id_chunks(selected_ids):
+                placeholders = ",".join("?" for _ in chunk)
+                tag_rows.extend(
+                    conn.execute(
+                        "SELECT it.image_id, t.name, t.tag_type, t.category, "
+                        "COALESCE(it.provenance, t.provenance, 'unknown') AS provenance "
+                        "FROM image_tags it JOIN tags t ON t.id=it.tag_id "
+                        f"WHERE it.image_id IN ({placeholders}) "
+                        "ORDER BY it.image_id, t.name COLLATE NOCASE, t.name, "
+                        "COALESCE(t.tag_type, t.category, 'unknown') COLLATE NOCASE, t.id",
+                        chunk,
+                    ).fetchall()
+                )
+        for tag_row in tag_rows:
+            tags_by_image[int(tag_row["image_id"])].append(
+                {
+                    "name": str(tag_row["name"]),
+                    "type": str(
+                        tag_row["tag_type"] or tag_row["category"] or "unknown"
+                    ),
+                    "provenance": str(tag_row["provenance"]),
+                }
+            )
+
+        updates: list[tuple[object, ...]] = []
+        for image_row in image_rows:
+            image_id = int(image_row["id"])
+            tags = tags_by_image[image_id]
+            rating = classify_content(image_row["purity"], tags)
+            updates.append(
+                (
+                    rating.rating,
+                    float(rating.confidence),
+                    rating.basis,
+                    json.dumps(
+                        list(rating.reasons), ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    len(tags),
+                    image_id,
+                )
+            )
+        conn.executemany(
+            "UPDATE images SET content_rating=?, rating_confidence=?, "
+            "rating_basis=?, rating_reasons_json=?, tag_count=? WHERE id=?",
+            updates,
+        )
+        facet_count = 0
+        if refresh_facets:
+            facet_count = _refresh_library_facets(conn, _now_iso())
+        conn.execute("RELEASE SAVEPOINT refresh_derived_metadata")
+    except Exception:
+        conn.execute("ROLLBACK TO SAVEPOINT refresh_derived_metadata")
+        conn.execute("RELEASE SAVEPOINT refresh_derived_metadata")
+        raise
+    return DerivedRefreshResult(images=len(image_rows), facets=facet_count)
+
+
+def read_library_facets(
+    conn: sqlite3.Connection,
+) -> dict[str, tuple[FacetCount, ...]]:
+    """Read the materialized facet snapshot without aggregating image tags."""
+    grouped: dict[str, list[FacetCount]] = {}
+    for row in conn.execute(
+        "SELECT facet, value, count, refreshed_at FROM library_facets "
+        "ORDER BY facet COLLATE NOCASE, count DESC, value COLLATE NOCASE, value"
+    ):
+        grouped.setdefault(str(row["facet"]), []).append(
+            FacetCount(
+                value=str(row["value"]), count=int(row["count"]),
+                refreshed_at=str(row["refreshed_at"]),
+            )
+        )
+    return {key: tuple(values) for key, values in grouped.items()}
+
+
+def counted_tag_autocomplete(
+    conn: sqlite3.Connection, prefix: str, limit: int = 20,
+) -> list[TagAutocompleteResult]:
+    """Return counted authoritative tag matches for a validated prefix."""
+    if not isinstance(prefix, str):
+        raise ValueError("prefix must be a string")
+    prefix = prefix.strip()
+    if not 1 <= len(prefix) <= 120:
+        raise ValueError("prefix length must be from 1 through 120")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+        raise ValueError("limit must be from 1 through 50")
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    rows = conn.execute(
+        "SELECT t.name, COALESCE(t.tag_type, t.category, 'unknown') AS tag_type, "
+        "COALESCE(it.provenance, t.provenance, 'unknown') AS provenance, "
+        "COALESCE(t.source, i.source) AS source, "
+        "COUNT(DISTINCT it.image_id) AS image_count "
+        "FROM tags t JOIN image_tags it ON it.tag_id=t.id "
+        "JOIN images i ON i.id=it.image_id "
+        "WHERE t.name LIKE ? ESCAPE '\\' COLLATE NOCASE "
+        "GROUP BY t.name, COALESCE(t.tag_type, t.category, 'unknown'), "
+        "COALESCE(it.provenance, t.provenance, 'unknown'), "
+        "COALESCE(t.source, i.source) "
+        "ORDER BY image_count DESC, t.name COLLATE NOCASE, t.name, "
+        "COALESCE(t.tag_type, t.category, 'unknown') COLLATE NOCASE, "
+        "COALESCE(t.tag_type, t.category, 'unknown'), "
+        "COALESCE(t.source, i.source) COLLATE NOCASE, "
+        "COALESCE(it.provenance, t.provenance, 'unknown') "
+        "LIMIT ?",
+        (escaped + "%", limit),
+    ).fetchall()
+    return [
+        TagAutocompleteResult(
+            name=str(row["name"]), type=str(row["tag_type"]),
+            provenance=str(row["provenance"]), source=str(row["source"]),
+            image_count=int(row["image_count"]),
+        )
+        for row in rows
+    ]
+
+
+def _suggestion_text(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value.strip()
+
+
+def list_tag_suggestions(
+    conn: sqlite3.Connection,
+    image_ids: Iterable[int],
+    *,
+    review_status: Optional[str] = None,
+) -> dict[int, tuple[TagSuggestion, ...]]:
+    """Batch-load suggestions for a page, grouped by image ID."""
+    ids = _validated_image_ids(image_ids)
+    if review_status is not None and review_status not in SUGGESTION_REVIEW_STATUSES:
+        raise ValueError("review_status is invalid")
+    grouped: dict[int, list[TagSuggestion]] = {image_id: [] for image_id in ids}
+    for chunk in _id_chunks(ids):
+        placeholders = ",".join("?" for _ in chunk)
+        sql = (
+            "SELECT * FROM tag_suggestions "
+            f"WHERE image_id IN ({placeholders})"
+        )
+        params: list[object] = list(chunk)
+        if review_status is not None:
+            sql += " AND review_status=?"
+            params.append(review_status)
+        sql += (
+            " ORDER BY image_id, review_status, normalized_label, generator, "
+            "model_version, id"
+        )
+        for row in conn.execute(sql, params):
+            suggestion = TagSuggestion.from_row(row)
+            grouped[suggestion.image_id].append(suggestion)
+    return {key: tuple(value) for key, value in grouped.items()}
+
+
+def upsert_tag_suggestion(
+    conn: sqlite3.Connection,
+    *,
+    image_id: int,
+    label: str,
+    confidence: float,
+    generator: str,
+    model_version: str,
+    provenance: str,
+) -> TagSuggestion:
+    """Insert/update review-only evidence without changing authoritative tags."""
+    ids = _validated_image_ids((image_id,))
+    if conn.execute("SELECT 1 FROM images WHERE id=?", ids).fetchone() is None:
+        raise ValueError(f"unknown image id: {image_id}")
+    label = _suggestion_text(label, "label")
+    normalized = normalize_label(label)
+    if not normalized:
+        raise ValueError("label must contain a visible word")
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        raise ValueError("confidence must be a number from 0 through 1")
+    confidence = float(confidence)
+    if not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        raise ValueError("confidence must be a number from 0 through 1")
+    generator = _suggestion_text(generator, "generator")
+    model_version = _suggestion_text(model_version, "model_version")
+    provenance = _suggestion_text(provenance, "provenance")
+    conn.execute(
+        "INSERT INTO tag_suggestions("
+        "image_id,label,normalized_label,confidence,generator,model_version,"
+        "provenance,review_status,created_at) VALUES (?,?,?,?,?,?,?,'pending',?) "
+        "ON CONFLICT(image_id, normalized_label, generator, model_version) "
+        "DO UPDATE SET label=excluded.label, confidence=excluded.confidence, "
+        "provenance=excluded.provenance",
+        (
+            image_id, label, normalized, confidence, generator, model_version,
+            provenance, _now_iso(),
+        ),
+    )
+    row = conn.execute(
+        "SELECT * FROM tag_suggestions WHERE image_id=? AND normalized_label=? "
+        "AND generator=? AND model_version=?",
+        (image_id, normalized, generator, model_version),
+    ).fetchone()
+    assert row is not None
+    return TagSuggestion.from_row(row)
+
+
+def review_tag_suggestion(
+    conn: sqlite3.Connection,
+    suggestion_id: int,
+    *,
+    review_status: str,
+    reviewer: str,
+    decision_note: Optional[str] = None,
+) -> TagSuggestion:
+    """Accept/reject a pending suggestion without promoting it to a tag."""
+    if isinstance(suggestion_id, bool) or not isinstance(suggestion_id, int) or suggestion_id < 1:
+        raise ValueError("suggestion_id must be a positive integer")
+    if review_status not in {"accepted", "rejected"}:
+        raise ValueError("review_status must be accepted or rejected")
+    reviewer = _suggestion_text(reviewer, "reviewer")
+    if decision_note is not None:
+        if not isinstance(decision_note, str):
+            raise ValueError("decision_note must be a string or null")
+        decision_note = decision_note.strip() or None
+    row = conn.execute(
+        "SELECT * FROM tag_suggestions WHERE id=?", (suggestion_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"unknown suggestion id: {suggestion_id}")
+    current = str(row["review_status"])
+    if current == review_status:
+        return TagSuggestion.from_row(row)
+    if current != "pending":
+        raise ValueError(f"invalid suggestion transition: {current} -> {review_status}")
+    cursor = conn.execute(
+        "UPDATE tag_suggestions SET review_status=?, reviewed_at=?, reviewer=?, "
+        "decision_note=? WHERE id=? AND review_status='pending'",
+        (review_status, _now_iso(), reviewer, decision_note, suggestion_id),
+    )
+    if cursor.rowcount != 1:
+        latest = conn.execute(
+            "SELECT review_status FROM tag_suggestions WHERE id=?",
+            (suggestion_id,),
+        ).fetchone()
+        latest_status = "missing" if latest is None else str(latest["review_status"])
+        raise ValueError(
+            "suggestion transition lost a concurrent decision: "
+            f"pending -> {latest_status}"
+        )
+    updated = conn.execute(
+        "SELECT * FROM tag_suggestions WHERE id=?", (suggestion_id,),
+    ).fetchone()
+    assert updated is not None
+    return TagSuggestion.from_row(updated)
+
+
 def default_wallhaven_ledger_path(library_root: Path) -> Path:
     """Return the durable Wallhaven enrichment ledger for a library root."""
     return Path(library_root) / WALLHAVEN_LEDGER_RELATIVE_PATH
+
+
+def default_provider_ledger_path(library_root: Path) -> Path:
+    """Return the durable generic provider-evidence ledger path."""
+    return Path(library_root) / PROVIDER_LEDGER_RELATIVE_PATH
 
 
 def _normalise_wallhaven_source_id(value: object) -> str:
@@ -962,6 +1591,12 @@ def _normalise_wallhaven_ledger_record(value: object) -> dict[str, object]:
             str(tag.get("category") or "").casefold(),
         )
     )
+    captured_at = value.get("captured_at")
+    if captured_at is not None:
+        captured_at = _normalise_captured_at(captured_at)
+    error = value.get("error")
+    if error is not None and not isinstance(error, str):
+        raise ValueError("error must be a string or null")
     return {
         "schema_version": WALLHAVEN_LEDGER_SCHEMA_VERSION,
         "record_type": WALLHAVEN_LEDGER_RECORD_TYPE,
@@ -972,6 +1607,8 @@ def _normalise_wallhaven_ledger_record(value: object) -> dict[str, object]:
         "purity": _optional_text(purity),
         "provenance": WALLHAVEN_LEDGER_PROVENANCE,
         "tags": tags,
+        "captured_at": captured_at,
+        "error": _optional_text(error),
     }
 
 
@@ -1042,6 +1679,322 @@ def _append_wallhaven_ledger_record(
         os.fsync(handle.fileno())
 
 
+def _normalise_captured_at(value: object) -> str:
+    text = _optional_text(value)
+    if text is None:
+        raise ValueError("captured_at must be a non-empty ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("captured_at must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("captured_at must include a timezone")
+    return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def _normalise_provider_tag(
+    value: object, *, provenance: str,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError("provider tag must be an object")
+    name = _optional_text(value.get("name"))
+    tag_type = _optional_text(value.get("type"))
+    if name is None:
+        raise ValueError("provider tag.name must be a non-empty string")
+    if tag_type is None:
+        raise ValueError("provider tag.type must be a non-empty string")
+    supplied_provenance = _optional_text(value.get("provenance"))
+    if supplied_provenance is not None and supplied_provenance != provenance:
+        raise ValueError("provider tag provenance must match its record")
+    tag: dict[str, object] = {
+        "name": name,
+        "slug": _optional_text(value.get("slug")) or _tag_slug(name),
+        "type": tag_type,
+        "provenance": provenance,
+    }
+    category = _optional_text(value.get("category"))
+    if category is not None:
+        tag["category"] = category
+    category_id = value.get("category_id")
+    if category_id is not None:
+        if isinstance(category_id, bool) or not isinstance(category_id, int):
+            raise ValueError("provider tag.category_id must be an integer or null")
+        tag["category_id"] = category_id
+    if "raw" in value:
+        raw = value["raw"]
+        try:
+            json.dumps(raw, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("provider tag.raw must be JSON serializable") from exc
+        tag["raw"] = raw
+    return tag
+
+
+def normalize_provider_ledger_record(value: object) -> dict[str, object]:
+    """Validate and normalize one generic captured-provider record."""
+    if not isinstance(value, Mapping):
+        raise ValueError("provider record must be an object")
+    if value.get("schema_version") != PROVIDER_LEDGER_SCHEMA_VERSION:
+        raise ValueError("provider record schema_version must be 1")
+    if value.get("record_type") != PROVIDER_LEDGER_RECORD_TYPE:
+        raise ValueError(
+            f"provider record_type must be {PROVIDER_LEDGER_RECORD_TYPE!r}"
+        )
+    source = canonical_source(str(value.get("source") or ""))
+    if source not in PROVIDER_LEDGER_SOURCES:
+        raise ValueError(
+            "provider source must be zerochan or anime-pictures"
+        )
+    source_id = _normalise_wallhaven_source_id(value.get("source_id"))
+    if not source_id:
+        raise ValueError("provider source_id must be a non-empty string")
+    status = value.get("status")
+    if status not in PROVIDER_LEDGER_STATUSES:
+        raise ValueError("provider status is invalid")
+    provenance = _optional_text(value.get("provenance"))
+    if provenance is None:
+        raise ValueError("provider provenance must be a non-empty string")
+    raw_tags = value.get("tags")
+    if not isinstance(raw_tags, list):
+        raise ValueError("provider tags must be an array")
+    tags = [
+        _normalise_provider_tag(tag, provenance=provenance)
+        for tag in raw_tags
+    ]
+    if status != STATUS_OK and tags:
+        raise ValueError("only an ok provider record may contain tags")
+    tags.sort(
+        key=lambda tag: (
+            str(tag["name"]).casefold(), str(tag["name"]),
+            str(tag["type"]).casefold(), str(tag["type"]),
+        )
+    )
+    error = value.get("error")
+    if error is not None and not isinstance(error, str):
+        raise ValueError("provider error must be a string or null")
+    return {
+        "schema_version": PROVIDER_LEDGER_SCHEMA_VERSION,
+        "record_type": PROVIDER_LEDGER_RECORD_TYPE,
+        "source": source,
+        "source_id": source_id,
+        "status": status,
+        "tags": tags,
+        "provenance": provenance,
+        "captured_at": _normalise_captured_at(value.get("captured_at")),
+        "error": _optional_text(error),
+    }
+
+
+def load_provider_ledger(
+    ledger_path: Path,
+) -> tuple[dict[tuple[str, str], dict[str, object]], dict[str, int]]:
+    """Load generic provider JSONL; the last valid source identity wins."""
+    path = Path(ledger_path)
+    records: dict[tuple[str, str], dict[str, object]] = {}
+    stats = {
+        "provider_ledger_lines": 0,
+        "provider_ledger_records": 0,
+        "provider_ledger_invalid": 0,
+        "provider_ledger_superseded": 0,
+    }
+    if not path.is_file():
+        return records, stats
+    with path.open("rb") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            if not raw_line.strip():
+                continue
+            stats["provider_ledger_lines"] += 1
+            try:
+                record = normalize_provider_ledger_record(
+                    json.loads(raw_line.decode("utf-8"))
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                stats["provider_ledger_invalid"] += 1
+                logger.warning(
+                    "ignoring invalid provider ledger record %s:%d: %s",
+                    path, line_number, exc,
+                )
+                continue
+            identity = (str(record["source"]), str(record["source_id"]))
+            if identity in records:
+                stats["provider_ledger_superseded"] += 1
+            records[identity] = record
+    stats["provider_ledger_records"] = len(records)
+    return records, stats
+
+
+def append_provider_ledger_record(
+    ledger_path: Path, record: Mapping[str, object],
+) -> dict[str, object]:
+    """Append and fsync one strict generic provider record."""
+    normalized = normalize_provider_ledger_record(record)
+    path = Path(ledger_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _jsonl_record_bytes(normalized)
+    with path.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() > 0:
+            handle.seek(-1, os.SEEK_END)
+            if handle.read(1) not in {b"\n", b"\r"}:
+                handle.seek(0, os.SEEK_END)
+                handle.write(b"\n")
+        handle.seek(0, os.SEEK_END)
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return normalized
+
+
+def apply_provider_enrichment_records(
+    conn: sqlite3.Connection,
+    records: (
+        Mapping[tuple[str, str], Mapping[str, object]]
+        | Iterable[Mapping[str, object]]
+    ),
+    *,
+    refresh_derived: bool = True,
+) -> dict[str, int]:
+    """Apply captured evidence by exact source identity and provenance."""
+    values = records.values() if isinstance(records, Mapping) else records
+    normalized_by_identity: dict[tuple[str, str], dict[str, object]] = {}
+    for value in values:
+        record = normalize_provider_ledger_record(value)
+        normalized_by_identity[
+            (str(record["source"]), str(record["source_id"]))
+        ] = record
+    stats = {
+        "provider_records": len(normalized_by_identity),
+        "provider_records_matched": 0,
+        "provider_records_unmatched": 0,
+        "provider_images_updated": 0,
+        "provider_tags_applied": 0,
+    }
+    affected_ids: set[int] = set()
+    for (source, source_id), record in sorted(normalized_by_identity.items()):
+        image_rows = conn.execute(
+            "SELECT id FROM images WHERE source=? "
+            "AND LOWER(CAST(source_site_id AS TEXT))=? ORDER BY id",
+            (source, source_id),
+        ).fetchall()
+        if not image_rows:
+            stats["provider_records_unmatched"] += 1
+            continue
+        stats["provider_records_matched"] += 1
+        provenance = str(record["provenance"])
+        for image_row in image_rows:
+            image_id = int(image_row["id"])
+            affected_ids.add(image_id)
+            conn.execute(
+                "DELETE FROM image_tags WHERE image_id=? AND provenance=?",
+                (image_id, provenance),
+            )
+            for tag in record["tags"]:
+                assert isinstance(tag, dict)
+                name = str(tag["name"])
+                tag_type = str(tag["type"])
+                tag_id = _stable_tag_id(source, name, tag_type)
+                conn.execute(
+                    "INSERT INTO tags(id,name,category_id,category,source,slug,"
+                    "tag_type,provenance) VALUES (?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(id) DO UPDATE SET name=excluded.name, "
+                    "category_id=COALESCE(excluded.category_id,tags.category_id), "
+                    "category=COALESCE(excluded.category,tags.category), "
+                    "source=excluded.source, slug=excluded.slug, "
+                    "tag_type=excluded.tag_type, "
+                    "provenance=COALESCE(tags.provenance,excluded.provenance)",
+                    (
+                        tag_id, name, tag.get("category_id"), tag.get("category"),
+                        source, tag.get("slug") or _tag_slug(name), tag_type,
+                        provenance,
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO image_tags(image_id,tag_id,provenance) "
+                    "VALUES (?,?,?) ON CONFLICT(image_id,tag_id) DO NOTHING",
+                    (image_id, tag_id, provenance),
+                )
+                stats["provider_tags_applied"] += 1
+            conn.execute(
+                "UPDATE images SET enrichment_status=? WHERE id=?",
+                (record["status"], image_id),
+            )
+            stats["provider_images_updated"] += 1
+    conn.execute(
+        "DELETE FROM tags WHERE NOT EXISTS "
+        "(SELECT 1 FROM image_tags WHERE image_tags.tag_id=tags.id)"
+    )
+    if refresh_derived:
+        refresh_derived_metadata(conn, affected_ids)
+    return stats
+
+
+def import_provider_ledger(
+    conn: sqlite3.Connection, ledger_path: Path,
+) -> dict[str, int]:
+    """Load and apply a generic provider ledger without any network access."""
+    records, load_stats = load_provider_ledger(ledger_path)
+    apply_stats = apply_provider_enrichment_records(conn, records)
+    return {**load_stats, **apply_stats}
+
+
+def provider_coverage(conn: sqlite3.Connection) -> dict[str, object]:
+    """Return stable coverage groups from authoritative index evidence."""
+    total = int(conn.execute("SELECT COUNT(*) FROM images").fetchone()[0])
+    by_source_status = [
+        {
+            "source": str(row["source"]),
+            "status": str(row["enrichment_status"]),
+            "count": int(row["count"]),
+        }
+        for row in conn.execute(
+            "SELECT source,enrichment_status,COUNT(*) AS count FROM images "
+            "GROUP BY source,enrichment_status "
+            "ORDER BY source COLLATE NOCASE,enrichment_status"
+        )
+    ]
+    bucket_sql = (
+        "CASE WHEN tag_count=0 THEN '0' WHEN tag_count=1 THEN '1' "
+        "WHEN tag_count BETWEEN 2 AND 4 THEN '2-4' "
+        "WHEN tag_count BETWEEN 5 AND 9 THEN '5-9' ELSE '10+' END"
+    )
+    by_tag_count_bucket = [
+        {
+            "source": str(row["source"]), "bucket": str(row["bucket"]),
+            "count": int(row["count"]),
+        }
+        for row in conn.execute(
+            f"SELECT source,{bucket_sql} AS bucket,COUNT(*) AS count "
+            f"FROM images GROUP BY source,{bucket_sql} "
+            "ORDER BY source COLLATE NOCASE,bucket"
+        )
+    ]
+    by_provenance = [
+        {
+            "source": str(row["source"]),
+            "provenance": str(row["provenance"]),
+            "image_count": int(row["image_count"]),
+            "tag_count": int(row["tag_count"]),
+        }
+        for row in conn.execute(
+            "SELECT COALESCE(t.source,i.source) AS source, "
+            "COALESCE(it.provenance,t.provenance,'unknown') AS provenance, "
+            "COUNT(DISTINCT it.image_id) AS image_count, COUNT(*) AS tag_count "
+            "FROM image_tags it JOIN images i ON i.id=it.image_id "
+            "JOIN tags t ON t.id=it.tag_id "
+            "GROUP BY COALESCE(t.source,i.source), "
+            "COALESCE(it.provenance,t.provenance,'unknown') "
+            "ORDER BY COALESCE(t.source,i.source) COLLATE NOCASE, "
+            "COALESCE(it.provenance,t.provenance,'unknown') COLLATE NOCASE"
+        )
+    ]
+    return {
+        "total_images": total,
+        "by_source_status": by_source_status,
+        "by_tag_count_bucket": by_tag_count_bucket,
+        "by_provenance": by_provenance,
+    }
+
+
 def _legacy_status(value: object) -> str:
     status = _optional_text(value)
     if status in {STATUS_PENDING, STATUS_OK, STATUS_SKIPPED, STATUS_FAILED}:
@@ -1062,7 +2015,7 @@ def _open_sqlite_read_only(db_path: Path) -> sqlite3.Connection:
         conn.row_factory = sqlite3.Row
         conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
         conn.execute("PRAGMA query_only = ON")
-        register_content_rating_sqlite_function(conn)
+        _register_index_sqlite_functions(conn)
     except Exception:
         conn.close()
         raise
@@ -1071,8 +2024,71 @@ def _open_sqlite_read_only(db_path: Path) -> sqlite3.Connection:
 
 def open_index_read_only(db_path: Path) -> sqlite3.Connection:
     """Open an existing index in query-only mode with helper functions loaded."""
+    conn = _open_sqlite_read_only(db_path)
+    try:
+        _validate_current_index_schema(conn)
+    except Exception:
+        conn.close()
+        raise
+    return conn
 
-    return _open_sqlite_read_only(db_path)
+
+def _validate_current_index_schema(conn: sqlite3.Connection) -> None:
+    user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if user_version != DB_SCHEMA_VERSION:
+        raise ValueError(
+            f"index schema version {user_version} is not {DB_SCHEMA_VERSION}"
+        )
+    tables = {
+        str(row["name"])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    for table, required in _VERIFY_REQUIRED_COLUMNS.items():
+        if table not in tables:
+            raise ValueError(f"index is missing required table: {table}")
+        missing = required - _table_columns(conn, table)
+        if missing:
+            raise ValueError(
+                f"index is missing required columns in {table}: "
+                + ", ".join(sorted(missing))
+            )
+    marker = conn.execute(
+        "SELECT value FROM schema_metadata WHERE key='schema_version'"
+    ).fetchone()
+    if marker is None or str(marker["value"]) != str(DB_SCHEMA_VERSION):
+        value = None if marker is None else marker["value"]
+        raise ValueError(
+            f"schema_metadata.schema_version is {value!r}, "
+            f"expected {DB_SCHEMA_VERSION}"
+        )
+
+
+def open_index_write(db_path: Path) -> sqlite3.Connection:
+    """Open schema-3 in read/write mode without creating or migrating it."""
+    database = Path(db_path).resolve()
+    if not database.is_file():
+        raise FileNotFoundError(f"SQLite database does not exist: {database}")
+    conn = sqlite3.connect(
+        f"{database.as_uri()}?mode=rw", uri=True,
+        timeout=SQLITE_BUSY_TIMEOUT_MS / 1000,
+    )
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+        conn.execute("PRAGMA foreign_keys = ON")
+        journal_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+        if journal_mode.casefold() != SQLITE_JOURNAL_MODE:
+            raise sqlite3.OperationalError(
+                f"index journal mode is {journal_mode}, expected {SQLITE_JOURNAL_MODE}"
+            )
+        _register_index_sqlite_functions(conn)
+        _validate_current_index_schema(conn)
+    except Exception:
+        conn.close()
+        raise
+    return conn
 
 
 def _new_verification_counts() -> dict[str, int]:
@@ -1092,6 +2108,9 @@ def _new_verification_counts() -> dict[str, int]:
         "foreign_key_violations": 0,
         "quick_check_failures": 0,
         "schema_failures": 0,
+        "derived_metadata_failures": 0,
+        "facet_failures": 0,
+        "suggestion_failures": 0,
         "unsupported_indexed_extensions": 0,
         "indexed_path_collisions": 0,
         "indexed_noncanonical_paths": 0,
@@ -1324,6 +2343,159 @@ def verify_library(db_path: Path, library_root: Path) -> dict[str, object]:
                 )
 
         if structurally_compatible:
+            derived_rows = conn.execute(
+                "SELECT id,purity,content_rating,rating_confidence,rating_basis,"
+                "rating_reasons_json,tag_count FROM images ORDER BY id"
+            ).fetchall()
+            tags_by_image: dict[int, list[dict[str, str]]] = {
+                int(row["id"]): [] for row in derived_rows
+            }
+            for tag_row in conn.execute(
+                "SELECT it.image_id,t.name FROM image_tags it "
+                "JOIN tags t ON t.id=it.tag_id "
+                "ORDER BY it.image_id,t.name COLLATE NOCASE,t.name,t.id"
+            ):
+                tags_by_image.setdefault(int(tag_row["image_id"]), []).append(
+                    {"name": str(tag_row["name"])}
+                )
+            for row in derived_rows:
+                image_id = int(row["id"])
+                rating = classify_content(row["purity"], tags_by_image[image_id])
+                try:
+                    reasons = json.loads(row["rating_reasons_json"])
+                    valid_reasons = (
+                        isinstance(reasons, list)
+                        and all(isinstance(reason, str) for reason in reasons)
+                    )
+                except (TypeError, json.JSONDecodeError):
+                    reasons = None
+                    valid_reasons = False
+                mismatches: list[str] = []
+                if row["content_rating"] != rating.rating:
+                    mismatches.append("content_rating")
+                confidence = row["rating_confidence"]
+                if (
+                    not isinstance(confidence, (int, float))
+                    or isinstance(confidence, bool)
+                    or not 0 <= float(confidence) <= 1
+                    or float(confidence) != float(rating.confidence)
+                ):
+                    mismatches.append("rating_confidence")
+                if row["rating_basis"] != rating.basis:
+                    mismatches.append("rating_basis")
+                if not valid_reasons or reasons != list(rating.reasons):
+                    mismatches.append("rating_reasons_json")
+                if row["tag_count"] != len(tags_by_image[image_id]):
+                    mismatches.append("tag_count")
+                if mismatches:
+                    counts["derived_metadata_failures"] += 1
+                    record_issue(
+                        "derived-metadata-mismatch", database,
+                        f"image_id={image_id}; fields={','.join(mismatches)}",
+                    )
+
+            suggestion_rows = conn.execute(
+                "SELECT * FROM tag_suggestions ORDER BY id"
+            ).fetchall()
+            for row in suggestion_rows:
+                problems: list[str] = []
+                if row["review_status"] not in SUGGESTION_REVIEW_STATUSES:
+                    problems.append("review_status")
+                confidence = row["confidence"]
+                if (
+                    not isinstance(confidence, (int, float))
+                    or isinstance(confidence, bool)
+                    or not 0 <= float(confidence) <= 1
+                ):
+                    problems.append("confidence")
+                for field_name in (
+                    "label", "normalized_label", "generator",
+                    "model_version", "provenance", "created_at",
+                ):
+                    if not _optional_text(row[field_name]):
+                        problems.append(field_name)
+                if row["review_status"] == "pending":
+                    if any(
+                        row[field_name] is not None
+                        for field_name in ("reviewed_at", "reviewer")
+                    ):
+                        problems.append("pending-review-fields")
+                elif not row["reviewed_at"] or not _optional_text(row["reviewer"]):
+                    problems.append("terminal-review-fields")
+                if problems:
+                    counts["suggestion_failures"] += 1
+                    record_issue(
+                        "invalid-tag-suggestion", database,
+                        f"suggestion_id={row['id']}; fields={','.join(problems)}",
+                    )
+
+            stored_facets = {
+                (str(row["facet"]), str(row["value"])): int(row["count"])
+                for row in conn.execute(
+                    "SELECT facet,value,count FROM library_facets"
+                )
+            }
+            expected_facets: dict[tuple[str, str], int] = {}
+            direct_facets = (
+                ("content_rating", "content_rating"),
+                ("source", "source"),
+                (
+                    "orientation",
+                    "COALESCE(NULLIF(TRIM(orientation), ''), 'unknown')",
+                ),
+                (
+                    "resolution_bucket",
+                    "COALESCE(NULLIF(TRIM(resolution_bucket), ''), 'unknown')",
+                ),
+                ("enrichment_status", "enrichment_status"),
+            )
+            for facet, expression in direct_facets:
+                for row in conn.execute(
+                    f"SELECT {expression} AS value,COUNT(*) AS count "
+                    f"FROM images GROUP BY {expression}"
+                ):
+                    expected_facets[(facet, str(row["value"]))] = int(row["count"])
+            tag_bucket = (
+                "CASE WHEN tag_count=0 THEN '0' WHEN tag_count=1 THEN '1' "
+                "WHEN tag_count BETWEEN 2 AND 4 THEN '2-4' "
+                "WHEN tag_count BETWEEN 5 AND 9 THEN '5-9' ELSE '10+' END"
+            )
+            for row in conn.execute(
+                f"SELECT {tag_bucket} AS value,COUNT(*) AS count FROM images "
+                f"GROUP BY {tag_bucket}"
+            ):
+                expected_facets[("tag_count_bucket", str(row["value"]))] = int(
+                    row["count"]
+                )
+            for row in conn.execute(
+                "SELECT source || '|' || enrichment_status AS value, "
+                "COUNT(*) AS count FROM images GROUP BY source,enrichment_status"
+            ):
+                expected_facets[("provider_coverage", str(row["value"]))] = int(
+                    row["count"]
+                )
+            for row in conn.execute(
+                "SELECT COALESCE(t.source,i.source) || '|' || "
+                "COALESCE(it.provenance,t.provenance,'unknown') AS value, "
+                "COUNT(DISTINCT it.image_id) AS count FROM image_tags it "
+                "JOIN images i ON i.id=it.image_id JOIN tags t ON t.id=it.tag_id "
+                "GROUP BY COALESCE(t.source,i.source), "
+                "COALESCE(it.provenance,t.provenance,'unknown')"
+            ):
+                expected_facets[("tag_provenance", str(row["value"]))] = int(
+                    row["count"]
+                )
+            for key in sorted(set(stored_facets) | set(expected_facets)):
+                if stored_facets.get(key) == expected_facets.get(key):
+                    continue
+                counts["facet_failures"] += 1
+                record_issue(
+                    "facet-mismatch", database,
+                    f"facet={key[0]}; value={key[1]}; "
+                    f"stored={stored_facets.get(key)}; "
+                    f"expected={expected_facets.get(key)}",
+                )
+
             disk_entries: list[Path] = []
             for entry in root.rglob("*"):
                 if not entry.is_file() or entry.suffix.casefold() not in IMAGE_EXTENSIONS:
@@ -1839,6 +3011,7 @@ def ingest_library(
     conn: sqlite3.Connection,
     library_root: Path,
     ledger_path: Optional[Path] = None,
+    provider_ledger_path: Optional[Path] = None,
 ) -> dict[str, int]:
     """Recursively rebuild the index view of one canonical library root.
 
@@ -1855,6 +3028,11 @@ def ingest_library(
     if ledger_path is None:
         ledger_path = default_wallhaven_ledger_path(library_root)
     ledger_records, ledger_stats = load_wallhaven_ledger(ledger_path)
+    if provider_ledger_path is None:
+        provider_ledger_path = default_provider_ledger_path(library_root)
+    provider_records, provider_ledger_stats = load_provider_ledger(
+        provider_ledger_path
+    )
     entries = sorted(
         (
             entry for entry in library_root.rglob("*")
@@ -1879,6 +3057,11 @@ def ingest_library(
         **ledger_stats,
         "ledger_applied": 0,
         "ledger_unmatched": 0,
+        **provider_ledger_stats,
+        "provider_records_matched": 0,
+        "provider_records_unmatched": 0,
+        "provider_images_updated": 0,
+        "provider_tags_applied": 0,
     }
     now = _now_iso()
     scanned_paths: set[str] = set()
@@ -2045,6 +3228,7 @@ def ingest_library(
         if source == "wallhaven" and ledger_source_id in ledger_records:
             _apply_wallhaven_record(
                 conn, image_id, ledger_records[ledger_source_id],
+                refresh_derived=False,
             )
             applied_ledger_ids.add(ledger_source_id)
             stats["ledger_applied"] += 1
@@ -2067,6 +3251,15 @@ def ingest_library(
         "DELETE FROM tags WHERE NOT EXISTS "
         "(SELECT 1 FROM image_tags WHERE image_tags.tag_id=tags.id)"
     )
+    provider_apply_stats = apply_provider_enrichment_records(
+        conn, provider_records, refresh_derived=False,
+    )
+    for key in (
+        "provider_records_matched", "provider_records_unmatched",
+        "provider_images_updated", "provider_tags_applied",
+    ):
+        stats[key] = provider_apply_stats[key]
+    refresh_derived_metadata(conn)
     stats["ledger_unmatched"] = len(
         set(ledger_records) - applied_ledger_ids
     )
@@ -2216,6 +3409,9 @@ QUERY_SORTS = (
     "filename",
     "franchise",
     "source",
+    "least_tagged",
+    "rating_confidence",
+    "shuffle",
 )
 
 _QUERY_ORDER_BY = {
@@ -2262,6 +3458,14 @@ _QUERY_ORDER_BY = {
         "images.source COLLATE NOCASE ASC, images.source ASC, "
         "images.filename COLLATE NOCASE ASC, images.filename ASC, images.id ASC"
     ),
+    "least_tagged": (
+        "images.tag_count ASC, "
+        "julianday(images.download_recorded_at) IS NULL ASC, "
+        "julianday(images.download_recorded_at) DESC, images.id DESC"
+    ),
+    "rating_confidence": (
+        "images.rating_confidence ASC, images.tag_count ASC, images.id ASC"
+    ),
 }
 
 
@@ -2275,6 +3479,7 @@ def query(
     tag: Optional[str] = None,
     content_rating: Optional[str] = None,
     sort: str = "path",
+    shuffle_seed: Optional[int] = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[ImageRow]:
@@ -2295,8 +3500,7 @@ def query(
     Returns:
         Matching :class:`ImageRow` instances.
     """
-    sql = "SELECT DISTINCT images.* FROM images"
-    joins = []
+    sql = "SELECT images.* FROM images"
     where: list[str] = []
     params: list[object] = []
     if content_rating is not None:
@@ -2305,26 +3509,15 @@ def query(
             raise ValueError(
                 "content_rating must be one of: " + ", ".join(CONTENT_RATINGS)
             )
-        joins.append(
-            "LEFT JOIN ("
-            "SELECT it_rating.image_id, "
-            "GROUP_CONCAT(t_rating.name, CHAR(31)) AS tag_names "
-            "FROM image_tags it_rating "
-            "JOIN tags t_rating ON t_rating.id=it_rating.tag_id "
-            "GROUP BY it_rating.image_id"
-            ") rating_tags ON rating_tags.image_id=images.id"
-        )
-        where.append(
-            "wallpaper_content_rating(images.purity, rating_tags.tag_names) = ?"
-        )
+        where.append("images.content_rating = ?")
         params.append(content_rating)
     if tag is not None:
-        joins.append("JOIN image_tags it ON it.image_id = images.id "
-                     "JOIN tags t ON t.id = it.tag_id")
-        where.append("LOWER(t.name) = LOWER(?)")
+        where.append(
+            "EXISTS (SELECT 1 FROM image_tags it "
+            "JOIN tags t ON t.id=it.tag_id WHERE it.image_id=images.id "
+            "AND t.name=? COLLATE NOCASE)"
+        )
         params.append(tag)
-    if joins:
-        sql += " " + " ".join(joins)
     if orientation is not None:
         where.append("images.orientation = ?")
         params.append(orientation)
@@ -2339,40 +3532,73 @@ def query(
         params.append(canonical_source(source))
     if where:
         sql += " WHERE " + " AND ".join(where)
-    if limit < 1:
-        raise ValueError("limit must be at least 1")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+        raise ValueError("limit must be from 1 through 500")
     if offset < 0:
         raise ValueError("offset must be 0 or greater")
     sort = str(sort).strip().casefold()
-    if sort not in _QUERY_ORDER_BY:
+    if sort not in QUERY_SORTS:
         raise ValueError("sort must be one of: " + ", ".join(QUERY_SORTS))
-    sql += " ORDER BY " + _QUERY_ORDER_BY[sort] + " LIMIT ? OFFSET ?"
+    if shuffle_seed is not None and (
+        isinstance(shuffle_seed, bool)
+        or not isinstance(shuffle_seed, int)
+        or not 0 <= shuffle_seed <= 2_147_483_647
+    ):
+        raise ValueError("shuffle_seed must be from 0 through 2147483647")
+    if sort == "shuffle":
+        if shuffle_seed is None:
+            raise ValueError("shuffle_seed is required when sort=shuffle")
+        sql += " ORDER BY wallpaper_seed_rank(images.id, ?) ASC, images.id ASC"
+        params.append(shuffle_seed)
+    else:
+        sql += " ORDER BY " + _QUERY_ORDER_BY[sort]
+    sql += " LIMIT ? OFFSET ?"
     params.extend((limit, offset))
     rows = conn.execute(sql, params).fetchall()
-    result: list[ImageRow] = []
-    for row in rows:
-        tags = tuple(
-            IndexedTag(
-                name=tag["name"],
-                slug=tag["slug"] or _tag_slug(tag["name"]),
-                type=tag["tag_type"] or tag["category"] or "unknown",
-                provenance=(
-                    tag["association_provenance"]
-                    or tag["provenance"]
-                    or "legacy-index"
-                ),
-                source=tag["source"] or row["source"],
+    image_ids = tuple(int(row["id"]) for row in rows)
+    tags_by_image: dict[int, list[IndexedTag]] = {
+        image_id: [] for image_id in image_ids
+    }
+    if image_ids:
+        placeholders = ",".join("?" for _ in image_ids)
+        tag_rows = conn.execute(
+            "SELECT it.image_id, t.name, t.slug, t.tag_type, t.provenance, "
+            "t.source, t.category, it.provenance AS association_provenance "
+            "FROM tags t JOIN image_tags it ON it.tag_id=t.id "
+            f"WHERE it.image_id IN ({placeholders}) "
+            "ORDER BY it.image_id, t.name COLLATE NOCASE, t.name, "
+            "COALESCE(t.tag_type, t.category, 'unknown') COLLATE NOCASE, "
+            "COALESCE(t.tag_type, t.category, 'unknown'), "
+            "COALESCE(t.source, '') COLLATE NOCASE, "
+            "COALESCE(it.provenance, t.provenance, '') COLLATE NOCASE, t.id",
+            image_ids,
+        ).fetchall()
+        source_by_image = {int(row["id"]): str(row["source"]) for row in rows}
+        for tag_row in tag_rows:
+            image_id = int(tag_row["image_id"])
+            tags_by_image[image_id].append(
+                IndexedTag(
+                    name=str(tag_row["name"]),
+                    slug=str(tag_row["slug"] or _tag_slug(tag_row["name"])),
+                    type=str(
+                        tag_row["tag_type"] or tag_row["category"] or "unknown"
+                    ),
+                    provenance=str(
+                        tag_row["association_provenance"]
+                        or tag_row["provenance"] or "legacy-index"
+                    ),
+                    source=str(
+                        tag_row["source"] or source_by_image[image_id]
+                    ),
+                )
             )
-            for tag in conn.execute(
-                "SELECT t.name, t.slug, t.tag_type, t.provenance, t.source, "
-                "t.category, it.provenance AS association_provenance "
-                "FROM tags t JOIN image_tags it ON it.tag_id=t.id "
-                "WHERE it.image_id=? ORDER BY t.name COLLATE NOCASE, t.tag_type",
-                (row["id"],),
-            )
+    suggestions = list_tag_suggestions(conn, image_ids)
+    return [
+        ImageRow.from_row(
+            row, tags_by_image[int(row["id"])], suggestions[int(row["id"])],
         )
-        result.append(ImageRow.from_row(row, tags))
-    return result
+        for row in rows
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -2895,7 +4121,7 @@ def emit_reorg_plan(
 # Wallhaven enrichment (Phase 2 — network)
 # ---------------------------------------------------------------------------
 
-def load_api_key(env_path: Path = DEFAULT_ENV_PATH) -> Optional[str]:
+def load_api_key(env_path: Path) -> Optional[str]:
     """Read ``WALLHAVEN_API_KEY`` from a ``KEY=VALUE`` ``.env`` file.
 
     Does not depend on python-dotenv (not a declared runtime dep). Comments
@@ -3001,12 +4227,14 @@ def _wallhaven_record_from_api(
             "purity": data.get("purity"),
             "provenance": WALLHAVEN_LEDGER_PROVENANCE,
             "tags": tags,
+            "captured_at": _now_iso(),
+            "error": None,
         }
     )
 
 
 def _wallhaven_status_record(
-    source_id: str, status: str,
+    source_id: str, status: str, *, error: Optional[str] = None,
 ) -> dict[str, object]:
     return _normalise_wallhaven_ledger_record(
         {
@@ -3019,15 +4247,26 @@ def _wallhaven_status_record(
             "purity": None,
             "provenance": WALLHAVEN_LEDGER_PROVENANCE,
             "tags": [],
+            "captured_at": _now_iso(),
+            "error": error,
         }
     )
 
 
 def _apply_wallhaven_record(
     conn: sqlite3.Connection, image_id: int, record: dict[str, object],
+    *, refresh_derived: bool = True,
 ) -> None:
     """Apply one durable Wallhaven record without replacing sidecar tags."""
     record = _normalise_wallhaven_ledger_record(record)
+    if record["enrichment_status"] == STATUS_PENDING:
+        conn.execute(
+            "UPDATE images SET enrichment_status=? WHERE id=?",
+            (STATUS_PENDING, image_id),
+        )
+        if refresh_derived:
+            refresh_derived_metadata(conn, (image_id,))
+        return
     conn.execute(
         "DELETE FROM image_tags WHERE image_id=? AND provenance='wallhaven-api'",
         (image_id,),
@@ -3043,7 +4282,8 @@ def _apply_wallhaven_record(
             "ON CONFLICT(id) DO UPDATE SET name=excluded.name, "
             "category_id=excluded.category_id, category=excluded.category, "
             "source=excluded.source, slug=excluded.slug, "
-            "tag_type=excluded.tag_type, provenance=excluded.provenance",
+            "tag_type=excluded.tag_type, "
+            "provenance=COALESCE(tags.provenance,excluded.provenance)",
             (
                 tag_id, tag_name, tag.get("category_id"), tag.get("category"),
                 "wallhaven", tag.get("slug") or _tag_slug(tag_name), tag_type,
@@ -3053,8 +4293,7 @@ def _apply_wallhaven_record(
         conn.execute(
             "INSERT INTO image_tags(image_id, tag_id, provenance) "
             "VALUES (?,?,'wallhaven-api') "
-            "ON CONFLICT(image_id, tag_id) DO UPDATE SET "
-            "provenance=excluded.provenance",
+            "ON CONFLICT(image_id, tag_id) DO NOTHING",
             (image_id, tag_id),
         )
     if record["enrichment_status"] == STATUS_OK:
@@ -3081,6 +4320,8 @@ def _apply_wallhaven_record(
         "DELETE FROM tags WHERE NOT EXISTS "
         "(SELECT 1 FROM image_tags WHERE image_tags.tag_id=tags.id)"
     )
+    if refresh_derived:
+        refresh_derived_metadata(conn, (image_id,))
 
 
 def enrich_wallhaven(
@@ -3088,101 +4329,155 @@ def enrich_wallhaven(
     api_key: Optional[str],
     *,
     max_fetch: Optional[int] = None,
+    max_attempts: Optional[int] = None,
     sleep_seconds: float = WALLHAVEN_SLEEP_SECONDS,
     ledger_path: Optional[Path] = None,
 ) -> dict[str, int]:
     """Fetch Wallhaven metadata for pending rows. Resumable.
 
-    Processes rows in ``source_site_id`` order, persisting progress after each
-    call so a ``KeyboardInterrupt`` or ``--max-fetch`` cap resumes cleanly on
-    the next run. Honours the 45 req/min ceiling via ``sleep_seconds``.
+    Pending status is the complete work queue; the progress cursor is only
+    telemetry and never excludes a row. An attempt record and then its terminal
+    result are fsynced before SQLite status/progress changes.
 
     Args:
         conn: Open DB connection.
         api_key: Optional Wallhaven API key. Without it, NSFW rows return 401
             and are marked ``skipped``.
-        max_fetch: Stop after this many successful fetches (``None`` = all).
+        max_fetch: Stop after this many successes. It also bounds attempts when
+            ``max_attempts`` is omitted, making one-item canaries truly bounded.
+        max_attempts: Stop after this many attempted rows (``None`` = all).
         sleep_seconds: Politeness sleep between calls.
 
     Returns:
-        Stats: ``{"fetched": n, "skipped": n, "failed": n, "remaining": n}``.
+        Stats include attempted, fetched, skipped, failed, and remaining.
     """
-    progress = conn.execute(
-        "SELECT last_processed_source_site_id FROM enrichment_progress "
-        "WHERE source = 'wallhaven'"
-    ).fetchone()
-    after_id = progress["last_processed_source_site_id"] if progress else None
+    if ledger_path is None:
+        raise ValueError("ledger_path is required for durable enrichment")
+    ledger_path = Path(ledger_path)
+    for name, value in (("max_fetch", max_fetch), ("max_attempts", max_attempts)):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+        ):
+            raise ValueError(f"{name} must be a positive integer or null")
+    if sleep_seconds < 0:
+        raise ValueError("sleep_seconds must be 0 or greater")
+    effective_attempt_limit = max_attempts
+    if effective_attempt_limit is None and max_fetch is not None:
+        effective_attempt_limit = max_fetch
 
-    pending_sql = (
+    rows = conn.execute(
         "SELECT id, source_site_id FROM images "
         "WHERE source = 'wallhaven' AND enrichment_status = ? "
         "AND source_site_id IS NOT NULL "
-    )
-    params: list[object] = [STATUS_PENDING]
-    if after_id is not None:
-        pending_sql += "AND source_site_id > ? "
-        params.append(after_id)
-    pending_sql += "ORDER BY source_site_id"
+        "ORDER BY LOWER(CAST(source_site_id AS TEXT)), "
+        "CAST(source_site_id AS TEXT) COLLATE BINARY, id",
+        (STATUS_PENDING,),
+    ).fetchall()
+    stats = {
+        "attempted": 0, "fetched": 0, "skipped": 0,
+        "failed": 0, "remaining": len(rows),
+    }
+    affected_ids: set[int] = set()
 
-    rows = conn.execute(pending_sql, params).fetchall()
-    stats = {"fetched": 0, "skipped": 0, "failed": 0, "remaining": len(rows)}
+    def publish_batch() -> None:
+        if not affected_ids:
+            return
+        refresh_derived_metadata(conn, affected_ids)
+        conn.commit()
+        affected_ids.clear()
 
-    for i, row in enumerate(rows):
-        if max_fetch is not None and stats["fetched"] >= max_fetch:
-            break
-        site_id = row["source_site_id"]
-        url = WALLHAVEN_DETAIL_URL.format(id=site_id)
-        if api_key:
-            url += f"?apikey={urllib.parse.quote(api_key)}"
-        try:
-            body = _wallhaven_get(url)
-            data = json.loads(body.decode("utf-8")).get("data") or {}
-            record = _wallhaven_record_from_api(site_id, data)
-            if ledger_path is not None:
+    try:
+        for row in rows:
+            if max_fetch is not None and stats["fetched"] >= max_fetch:
+                break
+            if (
+                effective_attempt_limit is not None
+                and stats["attempted"] >= effective_attempt_limit
+            ):
+                break
+            image_id = int(row["id"])
+            site_id = str(row["source_site_id"])
+            _append_wallhaven_ledger_record(
+                ledger_path,
+                _wallhaven_status_record(site_id, STATUS_PENDING),
+            )
+            stats["attempted"] += 1
+            url = WALLHAVEN_DETAIL_URL.format(id=site_id)
+            if api_key:
+                url += f"?apikey={urllib.parse.quote(api_key)}"
+            data: dict[str, object] = {}
+            try:
+                body = _wallhaven_get(url)
+                payload = json.loads(body.decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("Wallhaven response must be an object")
+                raw_data = payload.get("data") or {}
+                if not isinstance(raw_data, dict):
+                    raise ValueError("Wallhaven data must be an object")
+                data = raw_data
+                record = _wallhaven_record_from_api(site_id, data)
                 _append_wallhaven_ledger_record(ledger_path, record)
-            _apply_wallhaven_data(conn, row["id"], data, record=record)
-            stats["fetched"] += 1
-        except urllib.error.HTTPError as exc:
-            if exc.code == 401:
-                record = _wallhaven_status_record(site_id, STATUS_SKIPPED)
-                if ledger_path is not None:
-                    _append_wallhaven_ledger_record(ledger_path, record)
-                _apply_wallhaven_record(conn, row["id"], record)
-                stats["skipped"] += 1
-            else:
-                logger.warning("wallhaven %s -> HTTP %d; marking failed", site_id, exc.code)
-                conn.execute(
-                    "UPDATE images SET enrichment_status = ? WHERE id = ?",
-                    (STATUS_FAILED, row["id"]),
+                _apply_wallhaven_data(
+                    conn, image_id, data, record=record,
+                    refresh_derived=False,
+                )
+                stats["fetched"] += 1
+            except urllib.error.HTTPError as exc:
+                status = STATUS_SKIPPED if exc.code == 401 else STATUS_FAILED
+                record = _wallhaven_status_record(
+                    site_id, status, error=f"HTTP {exc.code}",
+                )
+                _append_wallhaven_ledger_record(ledger_path, record)
+                _apply_wallhaven_record(
+                    conn, image_id, record, refresh_derived=False,
+                )
+                if status == STATUS_SKIPPED:
+                    stats["skipped"] += 1
+                else:
+                    logger.warning(
+                        "wallhaven %s -> HTTP %d; durable failure recorded",
+                        site_id, exc.code,
+                    )
+                    stats["failed"] += 1
+            except (urllib.error.URLError, json.JSONDecodeError, ValueError) as exc:
+                logger.warning("wallhaven %s -> %s; durable failure recorded", site_id, exc)
+                record = _wallhaven_status_record(
+                    site_id, STATUS_FAILED, error=f"{type(exc).__name__}: {exc}",
+                )
+                _append_wallhaven_ledger_record(ledger_path, record)
+                _apply_wallhaven_record(
+                    conn, image_id, record, refresh_derived=False,
                 )
                 stats["failed"] += 1
-        except (urllib.error.URLError, json.JSONDecodeError, ValueError) as exc:
-            logger.warning("wallhaven %s -> %s; marking failed", site_id, exc)
+
+            affected_ids.add(image_id)
             conn.execute(
-                "UPDATE images SET enrichment_status = ? WHERE id = ?",
-                (STATUS_FAILED, row["id"]),
+                "INSERT INTO enrichment_progress("
+                "source,last_processed_source_site_id,updated_at) "
+                "VALUES ('wallhaven', ?, ?) ON CONFLICT(source) DO UPDATE SET "
+                "last_processed_source_site_id=excluded.last_processed_source_site_id, "
+                "updated_at=excluded.updated_at",
+                (site_id, _now_iso()),
             )
-            stats["failed"] += 1
-
-        conn.execute(
-            "INSERT INTO enrichment_progress(source, last_processed_source_site_id, updated_at) "
-            "VALUES ('wallhaven', ?, ?) "
-            "ON CONFLICT(source) DO UPDATE SET "
-            "last_processed_source_site_id=excluded.last_processed_source_site_id, "
-            "updated_at=excluded.updated_at",
-            (site_id, _now_iso()),
-        )
-        conn.commit()
-
-        if (i + 1) % 50 == 0:
-            logger.info(
-                "wallhaven enrichment: %d fetched, %d skipped, %d failed (%d/%d)",
-                stats["fetched"], stats["skipped"], stats["failed"],
-                i + 1, len(rows),
-            )
-
-        if stats["fetched"] + stats["skipped"] + stats["failed"] < len(rows):
-            time.sleep(sleep_seconds)
+            if len(affected_ids) >= 50:
+                publish_batch()
+                logger.info(
+                    "wallhaven enrichment: %d attempted, %d fetched, "
+                    "%d skipped, %d failed",
+                    stats["attempted"], stats["fetched"],
+                    stats["skipped"], stats["failed"],
+                )
+            if (
+                (effective_attempt_limit is None
+                 or stats["attempted"] < effective_attempt_limit)
+                and (max_fetch is None or stats["fetched"] < max_fetch)
+                and stats["attempted"] < len(rows)
+            ):
+                time.sleep(sleep_seconds)
+        publish_batch()
+    except BaseException:
+        conn.rollback()
+        raise
 
     stats["remaining"] = conn.execute(
         "SELECT COUNT(*) AS c FROM images WHERE source='wallhaven' "
@@ -3194,6 +4489,7 @@ def enrich_wallhaven(
 def _apply_wallhaven_data(
     conn: sqlite3.Connection, image_id: int, data: dict,
     *, record: Optional[dict[str, object]] = None,
+    refresh_derived: bool = True,
 ) -> None:
     """Write one Wallhaven ``data`` object to the image row + tags tables."""
     width = data.get("dimension_x")
@@ -3206,7 +4502,7 @@ def _apply_wallhaven_data(
         if row is None:
             raise ValueError(f"image id does not exist: {image_id}")
         record = _wallhaven_record_from_api(row["source_site_id"], data)
-    _apply_wallhaven_record(conn, image_id, record)
+    _apply_wallhaven_record(conn, image_id, record, refresh_derived=False)
 
     # Prefer API dimensions over filename-derived ones only when the API gave
     # real numbers; some rows return null dims. Franchise, purity, status, and
@@ -3216,6 +4512,8 @@ def _apply_wallhaven_data(
             "UPDATE images SET width=?, height=?, orientation=? WHERE id=?",
             (width, height, orientation, image_id),
         )
+    if refresh_derived:
+        refresh_derived_metadata(conn, (image_id,))
 
 
 # ---------------------------------------------------------------------------
@@ -3244,17 +4542,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         description="Rebuildable SQLite index of the wallpaper library.",
     )
     parser.add_argument(
-        "--library-root", type=Path, default=DEFAULT_LIBRARY_ROOT,
-        help="Library root (default: %(default)s).",
+        "--library-root", type=Path, default=None,
+        help="Explicit canonical library root.",
     )
     parser.add_argument(
-        "--db-path", type=Path, default=DEFAULT_DB_PATH,
-        help="SQLite index path (default: %(default)s).",
+        "--db-path", type=Path, default=None,
+        help="Explicit SQLite index path.",
     )
     parser.add_argument(
         "--ledger-path", type=Path, default=None,
-        help="Wallhaven enrichment ledger (default: "
-             "<library-root>/_metadata/wallhaven-enrichment.v1.jsonl).",
+        help="Explicit durable Wallhaven enrichment ledger path.",
+    )
+    parser.add_argument(
+        "--provider-ledger-path", type=Path, default=None,
+        help="Explicit durable generic provider-enrichment ledger path.",
+    )
+    parser.add_argument(
+        "--apply-provider-ledger", action="store_true",
+        help="Offline-apply --provider-ledger-path to the schema-3 index.",
     )
     parser.add_argument(
         "--export-wallhaven-ledger", type=Path, default=None, metavar="PATH",
@@ -3268,11 +4573,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument(
         "--max-fetch", type=int, default=None,
-        help="Stop the enrichment pass after this many successful fetches.",
+        help="Stop enrichment after this many successes (also bounds attempts "
+             "unless --max-attempts is given).",
     )
     parser.add_argument(
-        "--env-path", type=Path, default=DEFAULT_ENV_PATH,
-        help="Path to the .env file (for WALLHAVEN_API_KEY).",
+        "--max-attempts", type=int, default=None,
+        help="Stop enrichment after this many attempted pending rows.",
+    )
+    parser.add_argument(
+        "--env-path", type=Path, default=None,
+        help="Explicit .env path for WALLHAVEN_API_KEY.",
     )
     parser.add_argument(
         "--query", metavar="KEY=VALUE ...", default=None,
@@ -3305,6 +4615,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    def require_paths(*items: tuple[str, Optional[Path]]) -> bool:
+        missing = [name for name, value in items if value is None]
+        if missing:
+            logger.error("explicit path required: %s", ", ".join(missing))
+            return False
+        return True
+
     if args.verify or args.verify_json:
         incompatible: list[str] = []
         if args.export_wallhaven_ledger is not None:
@@ -3313,8 +4630,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             incompatible.append("--enrich")
         if args.max_fetch is not None:
             incompatible.append("--max-fetch")
+        if args.max_attempts is not None:
+            incompatible.append("--max-attempts")
         if args.ledger_path is not None:
             incompatible.append("--ledger-path")
+        if args.provider_ledger_path is not None:
+            incompatible.append("--provider-ledger-path")
+        if args.apply_provider_ledger:
+            incompatible.append("--apply-provider-ledger")
+        if args.env_path is not None:
+            incompatible.append("--env-path")
         if args.query is not None:
             incompatible.append("--query")
         if args.stats:
@@ -3329,8 +4654,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 ", ".join(incompatible),
             )
             return 2
+        if not require_paths(
+            ("--library-root", args.library_root),
+            ("--db-path", args.db_path),
+        ):
+            return 2
 
         try:
+            assert args.db_path is not None and args.library_root is not None
             report = verify_library(args.db_path, args.library_root)
         except (
             FileNotFoundError,
@@ -3354,7 +4685,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return exit_code
 
     if args.export_wallhaven_ledger is not None:
+        if not require_paths(("--db-path", args.db_path)):
+            return 2
         try:
+            assert args.db_path is not None
             export_stats = export_wallhaven_ledger(
                 args.db_path, args.export_wallhaven_ledger,
             )
@@ -3366,64 +4700,142 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"  {key:18s} {export_stats[key]}")
         return 0
 
-    conn = connect(args.db_path)
+    if args.apply_provider_ledger:
+        incompatible = []
+        if args.enrich:
+            incompatible.append("--enrich")
+        if args.query is not None:
+            incompatible.append("--query")
+        if args.stats:
+            incompatible.append("--stats")
+        if args.emit_plan is not None:
+            incompatible.append("--emit-plan")
+        if args.dashboard is not None:
+            incompatible.append("--dashboard")
+        if incompatible:
+            logger.error(
+                "%s cannot be combined with --apply-provider-ledger",
+                ", ".join(incompatible),
+            )
+            return 2
+        if not require_paths(
+            ("--db-path", args.db_path),
+            ("--provider-ledger-path", args.provider_ledger_path),
+        ):
+            return 2
+        assert args.db_path is not None and args.provider_ledger_path is not None
+        try:
+            conn = open_index_write(args.db_path)
+            try:
+                stats = import_provider_ledger(conn, args.provider_ledger_path)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+        except (FileNotFoundError, OSError, ValueError, sqlite3.Error) as exc:
+            logger.error("provider ledger import failed: %s", exc)
+            return 2
+        print(f"Provider ledger applied: {args.provider_ledger_path}")
+        for key in sorted(stats):
+            print(f"  {key:30s} {stats[key]}")
+        return 0
 
-    if args.query is not None:
-        q = _parse_query_arg(args.query)
-        rows = query(
-            conn,
-            orientation=q.get("orientation"),
-            franchise=q.get("franchise"),
-            bucket=q.get("bucket"),
-            source=q.get("source"),
-            tag=q.get("tag"),
-            content_rating=q.get("rating") or q.get("content_rating"),
-            sort=q.get("sort", "path"),
-            limit=int(q.get("limit", "100")),
-            offset=int(q.get("offset", "0")),
+    read_mode = any(
+        (
+            args.query is not None, args.stats,
+            args.emit_plan is not None, args.dashboard is not None,
         )
-        for r in rows:
-            print(f"{r.resolution_bucket}\t{r.orientation or '?'}\t"
-                  f"{r.source}\t{r.path}")
-        conn.close()
+    )
+    if read_mode:
+        if args.enrich:
+            logger.error("--enrich cannot be combined with a read-only mode")
+            return 2
+        if not require_paths(("--db-path", args.db_path)):
+            return 2
+        if (args.emit_plan is not None or args.dashboard is not None) and not require_paths(
+            ("--library-root", args.library_root),
+        ):
+            return 2
+        assert args.db_path is not None
+        try:
+            conn = open_index_read_only(args.db_path)
+            try:
+                if args.query is not None:
+                    q = _parse_query_arg(args.query)
+                    seed_text = q.get("shuffle_seed") or q.get("seed")
+                    rows = query(
+                        conn,
+                        orientation=q.get("orientation"),
+                        franchise=q.get("franchise"),
+                        bucket=q.get("bucket"),
+                        source=q.get("source"),
+                        tag=q.get("tag"),
+                        content_rating=q.get("rating") or q.get("content_rating"),
+                        sort=q.get("sort", "path"),
+                        shuffle_seed=None if seed_text is None else int(seed_text),
+                        limit=int(q.get("limit", "100")),
+                        offset=int(q.get("offset", "0")),
+                    )
+                    for row in rows:
+                        print(
+                            f"{row.resolution_bucket}\t{row.orientation or '?'}\t"
+                            f"{row.source}\t{row.path}"
+                        )
+                elif args.stats:
+                    _print_stats(conn)
+                elif args.emit_plan is not None:
+                    assert args.library_root is not None
+                    plan_stats = emit_reorg_plan(
+                        conn, Path(args.emit_plan), args.library_root,
+                    )
+                    print(f"Plan written to: {args.emit_plan}")
+                    print(f"  emitted:  {plan_stats['emitted']}")
+                    print(f"  missing:  {plan_stats['missing']}")
+                    print(f"  outside:  {plan_stats['outside_root']}")
+                elif args.dashboard is not None:
+                    assert args.library_root is not None
+                    dash_stats = generate_dashboard(
+                        conn, Path(args.dashboard), args.library_root,
+                    )
+                    print(f"Dashboard written to: {args.dashboard}")
+                    print(f"  images:   {dash_stats['present']}")
+                    print(f"  missing:  {dash_stats['missing']}")
+                    print(f"  days:     {dash_stats['days']}")
+            finally:
+                conn.close()
+        except (FileNotFoundError, OSError, ValueError, sqlite3.Error) as exc:
+            logger.error("read-only index operation failed: %s", exc)
+            return 2
         return 0
 
-    if args.stats:
-        _print_stats(conn)
-        conn.close()
-        return 0
-
-    if args.emit_plan is not None:
-        plan_stats = emit_reorg_plan(
-            conn, Path(args.emit_plan), args.library_root,
-        )
-        print(f"Plan written to: {args.emit_plan}")
-        print(f"  emitted:  {plan_stats['emitted']}")
-        print(f"  missing:  {plan_stats['missing']} "
-              f"(source file no longer on disk; skipped)")
-        print(f"  outside:  {plan_stats['outside_root']} "
-              f"(indexed path outside library root; skipped)")
-        conn.close()
-        return 0
-
-    if args.dashboard is not None:
-        dash_stats = generate_dashboard(
-            conn, Path(args.dashboard), args.library_root,
-        )
-        print(f"Dashboard written to: {args.dashboard}")
-        print(f"  images:   {dash_stats['present']}")
-        print(f"  missing:  {dash_stats['missing']}")
-        print(f"  days:     {dash_stats['days']}")
-        conn.close()
-        return 0
+    required = [
+        ("--library-root", args.library_root),
+        ("--db-path", args.db_path),
+        ("--ledger-path", args.ledger_path),
+        ("--provider-ledger-path", args.provider_ledger_path),
+    ]
+    if args.enrich:
+        required.append(("--env-path", args.env_path))
+    if not require_paths(*required):
+        return 2
+    assert args.library_root is not None
+    assert args.db_path is not None
+    assert args.ledger_path is not None
+    assert args.provider_ledger_path is not None
+    try:
+        conn = connect(args.db_path)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        logger.error("index open/migration failed: %s", exc)
+        return 2
 
     try:
-        ledger_path = (
-            args.ledger_path
-            if args.ledger_path is not None
-            else default_wallhaven_ledger_path(args.library_root)
+        ledger_path = args.ledger_path
+        stats = ingest_library(
+            conn, args.library_root, ledger_path=ledger_path,
+            provider_ledger_path=args.provider_ledger_path,
         )
-        stats = ingest_library(conn, args.library_root, ledger_path=ledger_path)
     except (FileNotFoundError, NotADirectoryError) as exc:
         logger.error("%s", exc)
         conn.close()
@@ -3434,20 +4846,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "tagged", "sidecars", "invalid_sidecars", "stale_removed",
         "ledger_lines", "ledger_records", "ledger_invalid",
         "ledger_superseded", "ledger_applied", "ledger_unmatched",
+        "provider_ledger_lines", "provider_ledger_records",
+        "provider_ledger_invalid", "provider_ledger_superseded",
+        "provider_records_matched", "provider_records_unmatched",
+        "provider_images_updated", "provider_tags_applied",
     ):
         print(f"  {k:14s} {stats[k]}")
     print(f"DB: {args.db_path}")
 
     if args.enrich:
+        assert args.env_path is not None
         key = load_api_key(args.env_path)
         print(f"\nEnriching Wallhaven (api key: {'yes' if key else 'no (SFW only)'})...")
         est = _estimate_enrich_minutes(conn)
         print(f"  estimated runtime: ~{est} min (resumable)")
         enrich_stats = enrich_wallhaven(
-            conn, key, max_fetch=args.max_fetch, ledger_path=ledger_path,
+            conn, key, max_fetch=args.max_fetch,
+            max_attempts=args.max_attempts, ledger_path=ledger_path,
         )
         print("Enrichment pass finished:")
-        for k in ("fetched", "skipped", "failed", "remaining"):
+        for k in ("attempted", "fetched", "skipped", "failed", "remaining"):
             print(f"  {k:14s} {enrich_stats[k]}")
 
     conn.close()
@@ -3484,14 +4902,8 @@ def _print_stats(conn: sqlite3.Connection) -> None:
         print(f"  {(row['resolution_bucket'] or 'unknown'):16s} {row['c']}")
     print("\nBy content rating:")
     for row in conn.execute(
-        "SELECT rating, COUNT(*) AS c FROM ("
-        "SELECT images.id, wallpaper_content_rating("
-        "images.purity, GROUP_CONCAT(tags.name, CHAR(31))) AS rating "
-        "FROM images "
-        "LEFT JOIN image_tags ON image_tags.image_id=images.id "
-        "LEFT JOIN tags ON tags.id=image_tags.tag_id "
-        "GROUP BY images.id"
-        ") GROUP BY rating ORDER BY c DESC"
+        "SELECT content_rating AS rating, COUNT(*) AS c FROM images "
+        "GROUP BY content_rating ORDER BY c DESC"
     ):
         print(f"  {row['rating']:16s} {row['c']}")
     print("\nTop 15 franchises:")

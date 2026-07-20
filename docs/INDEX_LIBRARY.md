@@ -1,262 +1,189 @@
 # Wallpaper Library Index
 
-`dl_engine.index_library` builds a searchable SQLite view of the canonical
-wallpaper library. It may create or update the database, but it never moves,
-renames, or deletes wallpaper image files.
+`dl_engine.index_library` builds the rebuildable SQLite view used by the web
+gallery. It may update SQLite and explicitly selected provider ledgers, but it
+never moves, renames, deletes, sorts, or rewrites wallpaper images or their
+`.wallpaper.json` sidecars.
 
-Canonical runtime paths on this machine are:
-
-```text
-Library: F:\Wallpapers\library
-Index:   F:\Wallpapers\wallpaper_library.sqlite
-Ledger:  F:\Wallpapers\library\_metadata\wallhaven-enrichment.v1.jsonl
-```
-
-Sibling `.wallpaper.json` files are the portable per-image authority. The
-path-independent Wallhaven enrichment ledger is the durable authority for
-API-only tags, franchise, purity, and enrichment status. SQLite is disposable:
-it can be deleted and rebuilt from both authorities without losing metadata.
-See
-[`WALLPAPER_METADATA.md`](WALLPAPER_METADATA.md) for the storage contract.
-
-## Physical layout
-
-Normal intake writes directly to:
+The normal SND-HOST runtime paths are examples, not inferred defaults:
 
 ```text
-library\<resolution-bucket>\<orientation>\<source>\<canonical-image>
+Library:         F:\Wallpapers\library
+Index:           F:\Wallpapers\wallpaper_library.sqlite
+Wallhaven ledger:F:\Wallpapers\library\_metadata\wallhaven-enrichment.v1.jsonl
+Provider ledger: F:\Wallpapers\library\_metadata\provider-enrichment.v1.jsonl
 ```
 
-The canonical source tokens are `wallhaven`, `zerochan`, `anime-pictures`, and
-`unknown`. The index scans this tree recursively, including migrated libraries
-where images are temporarily deeper or shallower. `_ExactDuplicates` is a
-quarantine rather than a canonical resolution bucket.
+Every live-capable CLI operation requires its applicable paths explicitly. A
+Git worktree parent is never treated as the collection root.
 
 ## Rebuild and reconciliation
 
 ```powershell
-Set-Location F:\Wallpapers\dl-engine
-python -m dl_engine.index_library
-```
-
-An offline rebuild:
-
-1. Recursively discovers supported image files below the library root.
-2. Loads and validates each sibling `.wallpaper.json` sidecar.
-3. Uses valid sidecar fields as authoritative metadata.
-4. Loads `_metadata/wallhaven-enrichment.v1.jsonl`; the last valid record for
-   each Wallhaven source ID wins, independent of image paths.
-5. Falls back to canonical-filename parsing, then legacy filename/path
-   inference when a sidecar is absent or invalid.
-6. Upserts current image and sidecar tags, then applies matching Wallhaven API
-   metadata so both provenance streams coexist.
-7. Removes stale database rows for files no longer present and clears orphaned
-   tag rows.
-
-Unreadable images are still total records: width and height are `0`,
-orientation is `unknown`, and the resolution bucket is `_UnknownResolution`.
-Invalid sidecars are reported and ignored for authority; they do not prevent a
-recoverable image from being indexed.
-
-This reconciliation is what makes a post-migration refresh meaningful. If an
-image moved, the refreshed database and any subsequently emitted manifest point
-at its current path rather than retaining the vanished pre-move row.
-
-The writable index connection uses SQLite WAL mode. A rebuild may hold one
-large transaction while it scans the library, but read-only consumers such as
-the HTML gallery continue seeing the last committed snapshot instead of
-failing with `database is locked`. Writer and reader connections also use an
-explicit busy timeout for short schema/checkpoint transitions. The temporary
-`wallpaper_library.sqlite-wal` and `wallpaper_library.sqlite-shm` siblings are
-normal while a rebuild is active and must not be deleted independently.
-
-Override paths only for isolated tests or alternate local collections:
-
-```powershell
+Set-Location F:\Wallpapers\webgallery
 python -m dl_engine.index_library `
-  --library-root F:\AlternateWallpapers\library `
-  --db-path F:\AlternateWallpapers\wallpaper_library.sqlite
+  --library-root F:\Wallpapers\library `
+  --db-path F:\Wallpapers\wallpaper_library.sqlite `
+  --ledger-path F:\Wallpapers\library\_metadata\wallhaven-enrichment.v1.jsonl `
+  --provider-ledger-path F:\Wallpapers\library\_metadata\provider-enrichment.v1.jsonl
 ```
+
+An offline rebuild recursively discovers supported images, validates sibling
+sidecars, loads both durable ledgers, and falls back to canonical filename or
+legacy path inference only when portable evidence is absent. It then:
+
+1. upserts current image and sidecar tags;
+2. applies Wallhaven records and captured Zerochan/Anime-Pictures records by
+   stable source identity;
+3. removes stale database rows and orphaned tags;
+4. materializes ratings, explanations, tag counts, and global facets in the
+   same transaction.
+
+Unreadable images remain total records with unknown dimensions/layout. Invalid
+sidecars are reported and ignored rather than rewritten. SQLite uses WAL with
+a busy timeout so read-only consumers continue to see the last committed
+snapshot during a rebuild. WAL and SHM siblings are part of the database and
+must not be deleted independently while a process is using it.
+
+## Schema 3
+
+Schema 3 is an additive migration of the disposable index. The migration
+rejects future or contradictory version markers before writing. Schema and
+derived publication happen in one transaction, and `PRAGMA user_version` plus
+`schema_metadata.schema_version` are written last. A schema-2 database is
+backfilled from its current purity and authoritative `image_tags` without
+changing sidecars, raw provider ledgers, tags, or enrichment progress.
+
+| Table | Purpose |
+|---|---|
+| `images` | File/source evidence plus materialized `content_rating`, `rating_confidence`, `rating_basis`, stable JSON reasons, and authoritative `tag_count`. |
+| `tags` / `image_tags` | Typed, source-qualified authoritative tags and per-image provenance. |
+| `library_facets` | Snapshot counts for rating, source, orientation, resolution bucket, enrichment status, tag-count bucket, provider coverage, and tag provenance. |
+| `tag_suggestions` | Review-only labels with confidence, generator/model/provenance, status, timestamps, reviewer, and note. |
+| `enrichment_progress` | Provider progress telemetry; never an exclusion authority. |
+| `schema_metadata` | Database schema version marker. |
+
+`refresh_derived_metadata(conn, image_ids=None, refresh_facets=True)` is the
+single publication path after ingest and authoritative provider-tag changes.
+It does not commit; the caller owns the transaction. It calls the unchanged
+conservative classifier using only `tags`/`image_tags`. Suggestions at every
+review status are excluded, and missing evidence stays `unknown`, never SFW.
 
 ## Read-only verification
 
-Run verification immediately after a successful rebuild, before treating the
-new SQLite view as ready for queries or downstream maintenance:
-
 ```powershell
-python -m dl_engine.index_library
-if ($LASTEXITCODE -ne 0) { throw "Wallpaper index rebuild failed." }
-
-# Human-readable status and bounded issue samples.
-python -m dl_engine.index_library --verify
-if ($LASTEXITCODE -ne 0) { throw "Wallpaper library verification failed." }
-```
-
-`--verify` opens the existing database with SQLite `mode=ro`; it does not call
-the schema creation/migration path. It also leaves images, sidecars, and the
-Wallhaven enrichment ledger unchanged. The verifier checks:
-
-- SQLite quick-check, foreign-key, schema-column, and schema-version health.
-- A one-to-one match between indexed paths and recursively scanned canonical
-  images, with no missing, outside-root, unsupported, or quarantine rows.
-- A valid sibling `.wallpaper.json` for every canonical image and agreement
-  among its filename, sidecar, database row, byte size, and classification.
-- Exact `<resolution-bucket>/<orientation>/<source>` placement.
-- A nonempty 64-hex SHA-256 on every indexed canonical row and no duplicate
-  normalized SHA-256 groups. Routine verification compares the recorded
-  sidecar/database values; it does not re-hash every image.
-
-Automation should use the JSON form, which writes one stable report document
-to stdout while diagnostics remain on stderr:
-
-```powershell
-python -m dl_engine.index_library --verify-json |
+python -m dl_engine.index_library --verify-json `
+  --library-root F:\Wallpapers\library `
+  --db-path F:\Wallpapers\wallpaper_library.sqlite |
   Set-Content -Encoding utf8 F:\Wallpapers\reports\library-verify.json
 $verifyExit = $LASTEXITCODE
 ```
 
-The top-level JSON fields are `schema_version`, `ok`, `status`,
-`library_root`, `db_path`, `quick_check`, `counts`, `issues_total`,
-`issues_truncated`, and `issues`. Detailed issues are deterministic and capped
-at 200; aggregate counters remain exact when details are truncated.
+Verification opens SQLite in `mode=ro` and never invokes migration. It checks
+quick-check, foreign keys, required schema-3 columns/tables/version markers,
+filesystem/index/sidecar agreement, canonical layout and SHA identity,
+materialized rating/count parity, stable JSON reasons, confidence bounds,
+suggestion decisions, and the complete facet snapshot. Exit codes are `0` for
+healthy, `1` for invariant failures, and `2` for incompatible/missing inputs or
+invalid command use.
 
-| Exit code | Meaning |
-|---|---|
-| `0` | Inputs are compatible and every invariant passes. |
-| `1` | Inputs are readable, but one or more library/index invariants fail. |
-| `2` | Command use is invalid, an input is missing/unreadable, or the database schema is incompatible. |
+## Queries and discovery
 
-Verification modes cannot be combined with enrichment, queries, stats, plan
-emission, ledger export, or other ingest options.
-
-## Schema
-
-The database schema is versioned and migrated additively. Its primary tables
-are:
-
-| Table | Purpose |
-|---|---|
-| `images` | One current row per image path, including source identity, canonical/original filenames, source URL, dimensions, classification, SHA-256, byte size, transport, source-relative path, recorded time, search origins, and enrichment state. |
-| `tags` | Source-qualified normalized tags, including display name, slug, and type/category. |
-| `image_tags` | Many-to-many relationship between images and tags, including the provenance of that claim for the individual image. |
-| `enrichment_progress` | Resume checkpoint for optional site enrichment. |
-| `schema_metadata` | Database schema version and migration metadata. |
-
-Generated tag IDs are deterministic and source-qualified. Rebuilding in a new
-process therefore produces the same tag identity and does not recreate the old
-randomized-hash/orphan-tag problem. A valid sidecar's tags replace inferred
-tags for that image; Wallhaven ledger tags are then applied alongside them.
-
-## Queries
-
-Queries do not rescan or mutate the library:
+Read-only query and stats modes require only the explicit database path:
 
 ```powershell
-# Summary counts.
-python -m dl_engine.index_library --stats
+python -m dl_engine.index_library `
+  --db-path F:\Wallpapers\wallpaper_library.sqlite `
+  --query "orientation=portrait source=wallhaven rating=sfw sort=newest"
 
-# Filters can be combined.
-python -m dl_engine.index_library --query "orientation=portrait source=wallhaven"
-python -m dl_engine.index_library --query "source=anime-pictures tag=Evertsen"
-python -m dl_engine.index_library --query "bucket=4K source=anime-pictures"
-python -m dl_engine.index_library --query "orientation=landscape limit=250"
+python -m dl_engine.index_library `
+  --db-path F:\Wallpapers\wallpaper_library.sqlite `
+  --query "sort=least_tagged limit=250"
+
+python -m dl_engine.index_library `
+  --db-path F:\Wallpapers\wallpaper_library.sqlite `
+  --query "sort=shuffle shuffle_seed=42 limit=250 offset=250"
 ```
 
-Supported query keys are `orientation`, `franchise`, `bucket`, `source`, `tag`,
-and `limit`. Tag and franchise matching is case-insensitive; source values use
-the canonical tokens above.
+Filters include orientation, franchise, bucket, source, exact tag, and
+materialized content rating. Stable sorts include the existing file/date/
+resolution/size/source orders plus `least_tagged`, `rating_confidence`, and
+`shuffle`. Shuffle requires an integer seed from 0 through 2147483647; the same
+seed/filter/page parameters reproduce the same order without duplicates.
+Offset pagination remains for this campaign; measured keyset pagination is a
+follow-up.
 
-Tags remain many-to-many data. Saved searches and generated collections should
-query the index rather than copying images into tag-named folders.
+A normal page performs one image SELECT, one `IN` query for every returned
+typed provider tag, and one batch suggestion query. It does not aggregate the
+tag table for rating filters or issue one tag query per card.
+`counted_tag_autocomplete` validates prefix length 1-120 and limit 1-50,
+treats `%`, `_`, and backslash literally, counts distinct images, and orders by
+count then stable name/type/source/provenance. Suggestions are never included.
 
-## Optional Wallhaven enrichment
-
-Wallhaven filename metadata contains identity and dimensions but not the site's
-full tag set. The optional network pass obtains those fields from the Wallhaven
-detail API and is resumable:
+## Wallhaven enrichment and resume
 
 ```powershell
-# Put WALLHAVEN_API_KEY in dl-engine\.env first when private-content access is
-# required. SFW enrichment can operate without a key.
-python -m dl_engine.index_library --enrich
-python -m dl_engine.index_library --enrich --max-fetch 50
+python -m dl_engine.index_library --enrich --max-attempts 50 `
+  --library-root F:\Wallpapers\library `
+  --db-path F:\Wallpapers\wallpaper_library.sqlite `
+  --ledger-path F:\Wallpapers\library\_metadata\wallhaven-enrichment.v1.jsonl `
+  --provider-ledger-path F:\Wallpapers\library\_metadata\provider-enrichment.v1.jsonl `
+  --env-path F:\Wallpapers\webgallery\.env
 ```
 
-The client paces requests below the 45-requests-per-minute ceiling. Before a
-successful API result is committed to SQLite, it is appended and flushed to
-the default ledger. HTTP 401 results are also recorded as `skipped`, avoiding
-the same unauthorized request after a rebuild. A malformed or truncated JSONL
-line is reported and ignored; later valid records still load. Ingest statistics
-report loaded, invalid, superseded, applied, and unmatched ledger records.
+Every `pending` Wallhaven row is discoverable, ordered by normalized source ID
+and image ID. `last_processed_source_site_id` is observability only; it is not
+a greater-than work predicate. Before SQLite status/progress advances, the
+client appends and fsyncs an attempt record and then a success, skip, or failure
+record. If execution stops after terminal ledger append but before SQLite
+commit, the next rebuild restores that result.
 
-Use `--ledger-path` to override the ledger for an isolated library. To preserve
-the API metadata in an older index, export it before discarding that database:
+`--max-attempts` bounds all requests. `--max-fetch` bounds successes and also
+bounds attempts when no explicit attempt cap is supplied. After tests pass, a
+live canary is at most one attempted row and requires a `VERIFIED` SND-HOST
+identity plus recorded exact paths. A canary does not authorize the full
+pending backlog.
+
+Legacy Wallhaven metadata can be exported read-only before discarding an old
+index:
 
 ```powershell
 python -m dl_engine.index_library `
   --db-path F:\Wallpapers\wallpaper_index.sqlite `
-  --export-wallhaven-ledger `
-    F:\Wallpapers\library\_metadata\wallhaven-enrichment.v1.jsonl
+  --export-wallhaven-ledger F:\Wallpapers\library\_metadata\wallhaven-enrichment.v1.jsonl
 ```
 
-Export is a separate operation: it opens `--db-path` with SQLite `mode=ro`,
-does not run schema creation or migration, merges duplicate image rows by
-Wallhaven source ID, and atomically replaces the output with deterministic
-JSONL. On schemas that carry association provenance, only `wallhaven-api` tags
-are exported; sidecar/search claims are not relabelled as API data.
+## Offline provider evidence and coverage
 
-## Legacy orientation migration/repair
-
-Normal `sort-downloads.ps1` intake already lands in
-`<bucket>/<orientation>/<source>`. `sort-by-orientation.ps1` is retained for
-older libraries and explicit repair manifests only.
+The generic v1 ledger accepts captured Zerochan or Anime-Pictures evidence;
+it is not a scraper. A strict record carries source, source ID, status, typed
+raw tags, exact provenance, capture time, and optional error. No label is
+invented from filenames, search staging, or visual output.
 
 ```powershell
-# Rebuild first so the manifest starts from current paths.
-python -m dl_engine.index_library
-
-# Optional: inspect the exact handoff manifest.
-python -m dl_engine.index_library `
-  --emit-plan F:\Wallpapers\orientation_plan.csv
-
-# Preview is non-destructive and writes an audit report.
-Set-Location F:\Wallpapers
-.\sort-by-orientation.ps1
-
-# Apply only after reviewing the report.
-.\sort-by-orientation.ps1 -Apply
-
-# Reconcile SQLite with the moved paths.
-Set-Location F:\Wallpapers\dl-engine
-python -m dl_engine.index_library
+python -m dl_engine.index_library --apply-provider-ledger `
+  --db-path F:\Wallpapers\wallpaper_library.sqlite `
+  --provider-ledger-path F:\Wallpapers\library\_metadata\provider-enrichment.v1.jsonl
 ```
 
-The CSV handoff contains `SourcePath`, `DestinationDir`, `Orientation`, and
-`Source`. `DestinationDir` is always relative to the library and includes the
-source component, for example `4K/portrait/anime-pictures` or
-`_UnknownResolution/unknown/unknown`.
+Import matches canonical source plus normalized source ID and replaces tag
+associations only for that exact provenance. It never rewrites sidecars. Sparse
+rows remain sparse until captured evidence exists. `provider_coverage` returns
+`total_images` and groups by source/status, source/tag-count bucket, and
+source/provenance; these are measurements, not completion claims.
 
-The PowerShell tool validates the complete manifest before moving the first
-file, confines every source and destination to the library root, and refuses an
-apply while queue-browser is open. Canonical images and their
-`.wallpaper.json` sidecars move as one pair. An exact destination is a no-op;
-any conflicting image or sidecar aborts before mutation rather than inventing
-a filename that would disagree with the metadata. This makes a freshly rebuilt
-manifest idempotent without stranding or invalidating sidecars.
+## Review-only visual suggestions
 
-## Tests
+Suggestion upsert/list/review primitives preserve label, bounded confidence,
+generator, model version, provenance, status, timestamps, reviewer, and note.
+Only atomic pending-to-accepted or pending-to-rejected transitions are valid.
+Accepted suggestions remain in `tag_suggestions`; they are never copied into
+provider tags, autocomplete, tag counts, ratings, purity, or franchise.
 
-```powershell
-# Index parsing, metadata authority, reconciliation, queries, and plan output.
-python -m pytest tests/test_index_library.py
+## Rollback
 
-# Preview/apply/recursive-refresh/idempotency integration.
-pwsh -File tests\powershell\SortByOrientation.Tests.ps1
-
-# Canonical filename/sidecar generation during normal intake.
-pwsh -File tests\powershell\SortDownloads.Tests.ps1
-```
-
-The PowerShell regression verifies that the refreshed database and manifest
-contain the moved current paths before asserting that a second apply performs
-no move or suffix rename.
+Stop gallery writers, retain canonical images, sidecars, and both ledgers, then
+discard only the rebuildable SQLite database and its stopped WAL/SHM siblings.
+Restore the prior code and rebuild the prior schema from durable evidence. Do
+not edit images or sidecars to roll back an index migration. Suggestion review
+can be disabled without deleting provenance or reviewer decisions.

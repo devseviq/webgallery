@@ -326,6 +326,76 @@ def _clone_indexed_image_row(
         conn.close()
 
 
+def _insert_minimal_image(
+    conn: sqlite3.Connection,
+    number: int,
+    *,
+    source: str = "zerochan",
+    source_id: Optional[str] = None,
+    purity: Optional[str] = None,
+    enrichment_status: str = "pending",
+    recorded_at: Optional[str] = None,
+) -> int:
+    row = conn.execute(
+        "INSERT INTO images("
+        "path,filename,source,source_site_id,purity,enrichment_status,indexed_at,"
+        "download_recorded_at,width,height,orientation,resolution_bucket) "
+        "VALUES (?,?,?,?,?,?,?, ?,1920,1080,'landscape','1080p') RETURNING id",
+        (
+            f"C:/synthetic/{number}.jpg", f"{number}.jpg", source,
+            source_id or str(number), purity, enrichment_status,
+            "2026-07-20T00:00:00+00:00",
+            recorded_at or f"2026-07-{(number % 20) + 1:02d}T00:00:00+00:00",
+        ),
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def _create_schema2_fixture(db: Path) -> None:
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE,
+            filename TEXT NOT NULL, source TEXT NOT NULL, ext TEXT,
+            width INTEGER, height INTEGER, orientation TEXT,
+            resolution_bucket TEXT, source_site_id TEXT, franchise TEXT,
+            purity TEXT, enrichment_status TEXT NOT NULL, indexed_at TEXT NOT NULL,
+            metadata_path TEXT, source_url TEXT, original_filename TEXT,
+            canonical_filename TEXT, slug TEXT, sha256 TEXT, size_bytes INTEGER,
+            transport TEXT, source_relative_path TEXT, download_recorded_at TEXT,
+            search_origins_json TEXT NOT NULL DEFAULT '[]'
+        );
+        CREATE TABLE tags (
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL, category_id INTEGER,
+            category TEXT, source TEXT, slug TEXT, tag_type TEXT, provenance TEXT
+        );
+        CREATE TABLE image_tags (
+            image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+            tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            provenance TEXT, PRIMARY KEY(image_id,tag_id)
+        );
+        CREATE TABLE enrichment_progress (
+            source TEXT PRIMARY KEY, last_processed_source_site_id TEXT,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE schema_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+        INSERT INTO images(
+            path,filename,source,source_site_id,purity,enrichment_status,indexed_at
+        ) VALUES ('C:/v2/one.jpg','one.jpg','wallhaven','aa1',NULL,'pending','now');
+        INSERT INTO tags(id,name,source,slug,tag_type,provenance)
+        VALUES (-9001,'hentai','wallhaven','hentai','rating','wallhaven-api');
+        INSERT INTO image_tags VALUES (1,-9001,'wallhaven-api');
+        INSERT INTO enrichment_progress VALUES ('wallhaven','zz9','before');
+        INSERT INTO schema_metadata VALUES ('schema_version','2');
+        PRAGMA user_version=2;
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
 def _wallhaven_ledger_record(
     source_id: str,
     *,
@@ -582,9 +652,10 @@ class IngestLibraryTests(unittest.TestCase):
 
 
 class CanonicalIngestTests(unittest.TestCase):
-    def test_defaults_use_fresh_canonical_library_and_database(self) -> None:
-        self.assertEqual(idx.DEFAULT_LIBRARY_ROOT.name, "library")
-        self.assertEqual(idx.DEFAULT_DB_PATH.name, "wallpaper_library.sqlite")
+    def test_live_capable_cli_paths_are_explicit(self) -> None:
+        self.assertFalse(hasattr(idx, "DEFAULT_LIBRARY_ROOT"))
+        self.assertFalse(hasattr(idx, "DEFAULT_DB_PATH"))
+        self.assertEqual(idx.main([]), 2)
 
     def test_missing_library_root_fails_loudly(self) -> None:
         import tempfile
@@ -1290,7 +1361,7 @@ class SchemaMigrationTests(unittest.TestCase):
                     tag["id"],
                     idx._stable_tag_id("anime-pictures", "Azur Lane", "unknown"),
                 )
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
             finally:
                 conn.close()
 
@@ -1816,6 +1887,406 @@ class QueryTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Orientation reorg plan (Phase 3 — read-only manifest emit)
 # ---------------------------------------------------------------------------
+
+
+class SchemaV3ContractTests(unittest.TestCase):
+    def test_true_schema2_migration_backfills_and_preserves_evidence(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "v2.sqlite"
+            _create_schema2_fixture(db)
+            conn = idx.connect(db)
+            try:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
+                self.assertTrue(
+                    {
+                        "content_rating", "rating_confidence", "rating_basis",
+                        "rating_reasons_json", "tag_count",
+                    }.issubset(idx._table_columns(conn, "images"))
+                )
+                tables = {
+                    row[0] for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                self.assertTrue({"library_facets", "tag_suggestions"}.issubset(tables))
+                row = conn.execute("SELECT * FROM images").fetchone()
+                self.assertEqual((row["content_rating"], row["tag_count"]), ("nsfw", 1))
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0], 1)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT last_processed_source_site_id FROM enrichment_progress"
+                    ).fetchone()[0],
+                    "zz9",
+                )
+                self.assertGreater(
+                    conn.execute("SELECT COUNT(*) FROM library_facets").fetchone()[0], 0,
+                )
+            finally:
+                conn.close()
+            reopened = idx.connect(db)
+            try:
+                self.assertEqual(reopened.execute("SELECT COUNT(*) FROM tags").fetchone()[0], 1)
+                self.assertEqual(reopened.execute("SELECT tag_count FROM images").fetchone()[0], 1)
+            finally:
+                reopened.close()
+
+    def test_schema2_migration_rolls_back_before_version_publication(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "v2.sqlite"
+            _create_schema2_fixture(db)
+            with mock.patch.object(
+                idx, "refresh_derived_metadata", side_effect=RuntimeError("injected"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "injected"):
+                    idx.connect(db)
+            conn = sqlite3.connect(db)
+            try:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT value FROM schema_metadata WHERE key='schema_version'"
+                    ).fetchone()[0],
+                    "2",
+                )
+                self.assertNotIn("content_rating", {row[1] for row in conn.execute("PRAGMA table_info(images)")})
+                tables = {
+                    row[0] for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                self.assertNotIn("library_facets", tables)
+                self.assertNotIn("tag_suggestions", tables)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0], 1)
+                self.assertEqual(
+                    conn.execute("SELECT COUNT(*) FROM enrichment_progress").fetchone()[0], 1,
+                )
+            finally:
+                conn.close()
+
+    def test_materialized_ratings_facets_and_reopen_are_idempotent(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "index.sqlite"
+            conn = idx.connect(db)
+            image_id = _insert_minimal_image(conn, 1)
+            idx._replace_image_tags(
+                conn, image_id, "zerochan",
+                [{"name": "hentai", "type": "rating", "provenance": "fixture"}],
+            )
+            result = idx.refresh_derived_metadata(conn)
+            conn.commit()
+            row = conn.execute("SELECT * FROM images WHERE id=?", (image_id,)).fetchone()
+            self.assertEqual(result.images, 1)
+            self.assertEqual(row["content_rating"], "nsfw")
+            self.assertEqual(row["rating_basis"], "explicit-tag")
+            self.assertEqual(json.loads(row["rating_reasons_json"]), ["hentai"])
+            self.assertEqual(row["tag_count"], 1)
+            self.assertIn("content_rating", idx.read_library_facets(conn))
+            conn.close()
+
+            reopened = idx.connect(db)
+            try:
+                self.assertEqual(reopened.execute("PRAGMA user_version").fetchone()[0], 3)
+                self.assertEqual(
+                    reopened.execute("SELECT COUNT(*) FROM tags").fetchone()[0], 1,
+                )
+                self.assertEqual(
+                    reopened.execute(
+                        "SELECT value FROM schema_metadata WHERE key='schema_version'"
+                    ).fetchone()[0],
+                    "3",
+                )
+            finally:
+                reopened.close()
+
+    def test_schema_marker_mismatch_and_future_version_fail_before_write(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, user_version, metadata_version in (
+                ("mismatch", 0, 2), ("future", 4, 4),
+            ):
+                db = Path(tmp) / f"{name}.sqlite"
+                conn = sqlite3.connect(db)
+                conn.execute("CREATE TABLE schema_metadata(key TEXT PRIMARY KEY,value TEXT)")
+                conn.execute(
+                    "INSERT INTO schema_metadata VALUES ('schema_version',?)",
+                    (str(metadata_version),),
+                )
+                conn.execute(f"PRAGMA user_version={user_version}")
+                conn.commit()
+                conn.close()
+                before = db.read_bytes()
+                with self.assertRaisesRegex(ValueError, "schema"):
+                    idx.connect(db)
+                self.assertEqual(db.read_bytes(), before)
+
+
+class DiscoveryQueryContractTests(unittest.TestCase):
+    def test_constant_shape_hydration_sorts_shuffle_and_literal_autocomplete(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = idx.connect(Path(tmp) / "index.sqlite")
+            image_ids: list[int] = []
+            for number in range(1, 13):
+                image_id = _insert_minimal_image(conn, number)
+                image_ids.append(image_id)
+                tags = [
+                    {
+                        "name": f"tag-{tag_number}", "type": "topic",
+                        "provenance": "fixture",
+                    }
+                    for tag_number in range(number % 4)
+                ]
+                if number in {1, 2}:
+                    tags.append(
+                        {
+                            "name": "100% literal", "type": "topic",
+                            "provenance": "fixture",
+                        }
+                    )
+                idx._replace_image_tags(conn, image_id, "zerochan", tags)
+            idx.refresh_derived_metadata(conn)
+            conn.commit()
+
+            def traced_count(limit: int) -> int:
+                statements: list[str] = []
+                conn.set_trace_callback(statements.append)
+                try:
+                    idx.query(conn, limit=limit)
+                finally:
+                    conn.set_trace_callback(None)
+                return sum(
+                    statement.lstrip().upper().startswith("SELECT")
+                    for statement in statements
+                )
+
+            self.assertEqual(traced_count(1), traced_count(12))
+            least = idx.query(conn, sort="least_tagged", limit=12)
+            self.assertEqual(
+                [row.tag_count for row in least],
+                sorted(row.tag_count for row in least),
+            )
+            first = idx.query(conn, sort="shuffle", shuffle_seed=42, limit=6)
+            second = idx.query(
+                conn, sort="shuffle", shuffle_seed=42, limit=6, offset=6,
+            )
+            repeated = idx.query(conn, sort="shuffle", shuffle_seed=42, limit=6)
+            self.assertEqual([row.id for row in first], [row.id for row in repeated])
+            self.assertEqual(len({row.id for row in first + second}), 12)
+            with self.assertRaisesRegex(ValueError, "shuffle_seed"):
+                idx.query(conn, sort="shuffle")
+            matches = idx.counted_tag_autocomplete(conn, "100%", 10)
+            self.assertEqual(len(matches), 1)
+            self.assertEqual(matches[0].image_count, 2)
+            conn.close()
+
+
+class SuggestionBoundaryTests(unittest.TestCase):
+    def test_suggestions_never_become_tags_ratings_or_autocomplete(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = idx.connect(Path(tmp) / "index.sqlite")
+            image_id = _insert_minimal_image(conn, 1)
+            suggestion = idx.upsert_tag_suggestion(
+                conn, image_id=image_id, label="hentai", confidence=0.97,
+                generator="visual-test", model_version="v1",
+                provenance="synthetic-model",
+            )
+            idx.refresh_derived_metadata(conn)
+            accepted = idx.review_tag_suggestion(
+                conn, suggestion.id, review_status="accepted", reviewer="tester",
+            )
+            preserved = idx.upsert_tag_suggestion(
+                conn, image_id=image_id, label="HENTAI", confidence=0.99,
+                generator="visual-test", model_version="v1",
+                provenance="synthetic-model-rerun",
+            )
+            idx.refresh_derived_metadata(conn)
+            row = idx.query(conn)[0]
+            self.assertEqual(accepted.review_status, "accepted")
+            self.assertEqual(preserved.review_status, "accepted")
+            self.assertEqual(row.content_rating.rating, "unknown")
+            self.assertEqual(row.tag_count, 0)
+            self.assertEqual(row.tags, ())
+            self.assertEqual(len(row.tag_suggestions), 1)
+            self.assertEqual(idx.counted_tag_autocomplete(conn, "hentai"), [])
+            with self.assertRaisesRegex(ValueError, "invalid suggestion transition"):
+                idx.review_tag_suggestion(
+                    conn, suggestion.id, review_status="rejected", reviewer="other",
+                )
+
+            pending = idx.upsert_tag_suggestion(
+                conn, image_id=image_id, label="adult content", confidence=0.8,
+                generator="visual-test", model_version="v2",
+                provenance="synthetic-model",
+            )
+            conn.execute(
+                "CREATE TRIGGER ignore_test_review BEFORE UPDATE OF review_status "
+                "ON tag_suggestions WHEN OLD.id=%d BEGIN SELECT RAISE(IGNORE); END"
+                % pending.id
+            )
+            with self.assertRaisesRegex(ValueError, "concurrent decision"):
+                idx.review_tag_suggestion(
+                    conn, pending.id, review_status="accepted", reviewer="tester",
+                )
+            conn.close()
+
+
+class GenericProviderLedgerTests(unittest.TestCase):
+    @staticmethod
+    def record(source_id: str, tag_name: str) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "record_type": "provider-enrichment",
+            "source": "zerochan",
+            "source_id": source_id,
+            "status": "ok",
+            "tags": [{"name": tag_name, "type": "topic"}],
+            "provenance": "zerochan-captured-v1",
+            "captured_at": "2026-07-20T12:00:00+00:00",
+            "error": None,
+        }
+
+    def test_strict_durable_import_replaces_only_exact_provenance(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "provider.jsonl"
+            idx.append_provider_ledger_record(ledger, self.record("AbC", "hentai"))
+            idx.append_provider_ledger_record(ledger, self.record("abc", "landscape"))
+            records, load_stats = idx.load_provider_ledger(ledger)
+            self.assertEqual(load_stats["provider_ledger_superseded"], 1)
+            with self.assertRaisesRegex(ValueError, "type"):
+                invalid = self.record("x", "bad")
+                invalid["tags"] = [{"name": "untyped"}]
+                idx.normalize_provider_ledger_record(invalid)
+
+            conn = idx.connect(Path(tmp) / "index.sqlite")
+            image_id = _insert_minimal_image(
+                conn, 1, source="zerochan", source_id="ABC",
+            )
+            idx._replace_image_tags(
+                conn, image_id, "zerochan",
+                [{"name": "search context", "type": "search", "provenance": "sidecar"}],
+            )
+            stats = idx.apply_provider_enrichment_records(conn, records)
+            row = idx.query(conn)[0]
+            self.assertEqual(stats["provider_records_matched"], 1)
+            self.assertEqual(
+                {(tag.name, tag.provenance) for tag in row.tags},
+                {
+                    ("search context", "sidecar"),
+                    ("landscape", "zerochan-captured-v1"),
+                },
+            )
+            self.assertEqual(row.tag_count, 2)
+            coverage = idx.provider_coverage(conn)
+            self.assertEqual(coverage["total_images"], 1)
+            self.assertTrue(coverage["by_provenance"])
+            conn.close()
+
+
+class WallhavenResumeV3Tests(unittest.TestCase):
+    @staticmethod
+    def response(source_id: str) -> bytes:
+        return json.dumps(
+            {
+                "data": {
+                    "id": source_id, "purity": "sfw",
+                    "dimension_x": 1920, "dimension_y": 1080, "tags": [],
+                }
+            }
+        ).encode("utf-8")
+
+    def test_pending_queue_ignores_old_cursor_and_orders_mixed_case(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = idx.connect(Path(tmp) / "index.sqlite")
+            for number, source_id in enumerate(("zz9", "AA1", "mm2", "bb3"), 1):
+                _insert_minimal_image(
+                    conn, number, source="wallhaven", source_id=source_id,
+                )
+            conn.execute(
+                "INSERT INTO enrichment_progress VALUES ('wallhaven','mm9','now')"
+            )
+            conn.commit()
+            seen: list[str] = []
+
+            def fetch(url: str) -> bytes:
+                source_id = url.split("/w/", 1)[1].split("?", 1)[0]
+                seen.append(source_id)
+                return self.response(source_id)
+
+            ledger = Path(tmp) / "wallhaven.jsonl"
+            with mock.patch.object(idx, "_wallhaven_get", side_effect=fetch):
+                stats = idx.enrich_wallhaven(
+                    conn, None, max_attempts=4, sleep_seconds=0,
+                    ledger_path=ledger,
+                )
+            self.assertEqual(seen, ["AA1", "bb3", "mm2", "zz9"])
+            self.assertEqual(stats["attempted"], 4)
+            self.assertEqual(stats["remaining"], 0)
+            records, ledger_stats = idx.load_wallhaven_ledger(ledger)
+            self.assertEqual(len(records), 4)
+            self.assertEqual(ledger_stats["ledger_lines"], 8)
+            conn.close()
+
+    def test_terminal_ledger_rebuilds_after_interrupt_before_sqlite(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            conn = idx.connect(tmp_path / "first.sqlite")
+            _insert_minimal_image(
+                conn, 1, source="wallhaven", source_id="g7xd1d",
+            )
+            conn.commit()
+            ledger = tmp_path / "wallhaven.jsonl"
+            with mock.patch.object(
+                idx, "_wallhaven_get", return_value=self.response("g7xd1d"),
+            ), mock.patch.object(
+                idx, "_apply_wallhaven_data", side_effect=KeyboardInterrupt,
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    idx.enrich_wallhaven(
+                        conn, None, max_attempts=1, sleep_seconds=0,
+                        ledger_path=ledger,
+                    )
+            self.assertEqual(
+                conn.execute("SELECT enrichment_status FROM images").fetchone()[0],
+                "pending",
+            )
+            records, _ = idx.load_wallhaven_ledger(ledger)
+            self.assertEqual(records["g7xd1d"]["enrichment_status"], "ok")
+            conn.close()
+
+            root = tmp_path / "library"
+            _write_canonical_fixture_image(root, source_id="g7xd1d")
+            rebuilt = idx.connect(tmp_path / "rebuilt.sqlite")
+            try:
+                idx.ingest_library(
+                    rebuilt, root, ledger_path=ledger,
+                    provider_ledger_path=tmp_path / "provider.jsonl",
+                )
+                self.assertEqual(idx.query(rebuilt)[0].enrichment_status, "ok")
+                with mock.patch.object(idx, "_wallhaven_get") as fetch:
+                    resumed = idx.enrich_wallhaven(
+                        rebuilt, None, max_attempts=1, sleep_seconds=0,
+                        ledger_path=ledger,
+                    )
+                self.assertEqual(resumed["attempted"], 0)
+                fetch.assert_not_called()
+            finally:
+                rebuilt.close()
 
 
 class ReorgPlanTests(unittest.TestCase):
