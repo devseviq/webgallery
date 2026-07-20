@@ -18,6 +18,10 @@
       --suggestive: #f1b44c;
       --nsfw: #f05b69;
       --unknown: #9b87db;
+      --card-min: 210px;
+      --media-height: 220px;
+      --media-fit: contain;
+      --detail-fit: contain;
     }
     * { box-sizing: border-box; }
     body {
@@ -42,7 +46,8 @@
     }
     .banner.warn { border-left-color: var(--suggestive); background: #211b11; }
     .banner.error { border-left-color: var(--nsfw); background: #251216; }
-    .rating-tabs, .filters, .transfer-bar, .scroll-footer {
+    .rating-tabs, .filters, .presentation-bar, .preset-bar, .active-filter-bar,
+    .transfer-bar, .scroll-footer {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
@@ -70,13 +75,14 @@
     button[data-rating="unknown"].active { border-color: var(--unknown); }
     button:disabled { opacity: .45; cursor: default; }
     label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+    .filter-field { color: var(--muted); display: flex; align-items: center; gap: 6px; }
     input[type="text"] { min-width: 180px; }
     input[type="checkbox"] { min-width: 0; accent-color: var(--nsfw); }
     .spacer { flex: 1; }
     .count { color: var(--muted); font-variant-numeric: tabular-nums; }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--card-min)), 1fr));
       gap: 12px;
       padding-bottom: 20px;
     }
@@ -96,11 +102,16 @@
     .media {
       display: grid;
       place-items: center;
-      height: 220px;
+      height: var(--media-height);
       background: #06090e;
       overflow: hidden;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      width: 100%;
+      color: inherit;
     }
-    .media img { width: 100%; height: 100%; object-fit: contain; transition: filter .18s, transform .18s; }
+    .media img { width: 100%; height: 100%; object-fit: var(--media-fit); transition: filter .18s, transform .18s; }
     .media:hover img { transform: scale(1.015); }
     body[data-reveal-nsfw="false"] .tile.rating-nsfw .media img { filter: blur(24px) brightness(.38); transform: scale(1.12); }
     .missing { color: var(--muted); padding: 18px; text-align: center; }
@@ -138,7 +149,9 @@
     .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 650; }
     .meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
     .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 7px; }
-    .tag { background: #1b2737; border-radius: 999px; padding: 2px 6px; font-size: 10px; color: #c6d4e3; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag { background: #1b2737; border: 1px solid transparent; border-radius: 999px; padding: 2px 6px; font-size: 10px; color: #c6d4e3; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button.tag { cursor: pointer; }
+    button.tag:hover, button.tag:focus-visible { border-color: var(--accent); background: #21334d; }
     .empty { grid-column: 1 / -1; padding: 48px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 10px; }
     .scroll-sentinel { height: 1px; }
     .transfer-bar {
@@ -152,16 +165,126 @@
     .transfer-status.error { color: var(--nsfw); }
     .scroll-footer { justify-content: center; min-height: 58px; text-align: center; }
     .scroll-footer button[hidden] { display: none; }
+    body[data-density="compact"] { --card-min: 155px; --media-height: 155px; }
+    body[data-density="comfortable"] { --card-min: 210px; --media-height: 220px; }
+    body[data-density="cinematic"] { --card-min: 330px; --media-height: 340px; }
+    body[data-fit="contain"] { --media-fit: contain; --detail-fit: contain; }
+    body[data-fit="crop"] { --media-fit: cover; --detail-fit: cover; }
+    .presentation-bar, .preset-bar { justify-content: flex-start; }
+    .preset-bar button.active { border-color: var(--accent); background: #21334d; }
+    .active-filter-bar { min-height: 48px; }
+    .active-filter-bar[hidden] { display: none; }
+    .filter-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 12px;
+    }
+    .filter-chip::after { content: "\00d7"; font-size: 15px; line-height: 1; }
+    .combobox { position: relative; min-width: min(320px, 90vw); }
+    .combobox input { width: 100%; }
+    .tag-options {
+      position: absolute;
+      inset: calc(100% + 4px) 0 auto 0;
+      z-index: 50;
+      margin: 0;
+      padding: 5px;
+      max-height: 320px;
+      overflow: auto;
+      list-style: none;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #0c131e;
+      box-shadow: 0 14px 36px rgba(0, 0, 0, .55);
+    }
+    .tag-options[hidden] { display: none; }
+    .tag-option { padding: 7px 8px; border-radius: 6px; cursor: pointer; }
+    .tag-option[aria-selected="true"], .tag-option:hover { background: #21334d; }
+    .tag-option strong { display: block; color: var(--text); }
+    .tag-option span { color: var(--muted); font-size: 11px; }
+    .assist { color: var(--muted); font-size: 11px; }
+    dialog.detail-dialog {
+      width: min(1180px, calc(100vw - 24px));
+      max-height: calc(100vh - 24px);
+      padding: 0;
+      color: var(--text);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 30px 90px rgba(0, 0, 0, .75);
+    }
+    dialog.detail-dialog:not([open]):not(.fallback-open) { display: none; }
+    dialog.detail-dialog::backdrop { background: rgba(2, 5, 9, .82); }
+    dialog.detail-dialog.fallback-open {
+      display: block;
+      position: fixed;
+      inset: 12px;
+      z-index: 1000;
+      margin: auto;
+      overflow: auto;
+    }
+    .detail-header {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 11px 13px;
+      background: color-mix(in srgb, var(--panel) 96%, transparent);
+      border-bottom: 1px solid var(--border);
+    }
+    .detail-header h2 { flex: 1; min-width: 0; margin: 0; font-size: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .detail-layout { display: grid; grid-template-columns: minmax(320px, 1.25fr) minmax(300px, .75fr); }
+    .detail-visual { min-width: 0; padding: 14px; background: #06090e; }
+    .detail-image-wrap { height: min(68vh, 760px); display: grid; place-items: center; overflow: hidden; border-radius: 8px; }
+    .detail-image { width: 100%; height: 100%; object-fit: var(--detail-fit); }
+    body[data-reveal-nsfw="false"] .detail-dialog[data-rating="nsfw"] .detail-image { filter: blur(28px) brightness(.4); transform: scale(1.08); }
+    .detail-status { min-height: 21px; margin-top: 8px; color: var(--muted); }
+    .detail-status.error { color: var(--nsfw); }
+    .detail-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+    .detail-info { padding: 14px; overflow: auto; max-height: calc(100vh - 74px); }
+    .detail-info h3 { margin: 18px 0 7px; font-size: 15px; }
+    .detail-info h3:first-child { margin-top: 0; }
+    .facts { display: grid; grid-template-columns: minmax(105px, auto) 1fr; gap: 5px 10px; margin: 0; }
+    .facts dt { color: var(--muted); }
+    .facts dd { margin: 0; overflow-wrap: anywhere; }
+    .tag-group { padding: 8px 0; border-top: 1px solid var(--border); }
+    .tag-group:first-child { border-top: 0; }
+    .tag-group-title { color: var(--muted); font-size: 12px; margin-bottom: 5px; text-transform: capitalize; }
+    .suggestion-boundary { border: 1px solid var(--border); border-left: 4px solid var(--unknown); border-radius: 8px; padding: 9px; background: #151527; }
+    .review-fields { display: grid; gap: 7px; margin: 9px 0; }
+    .review-fields label { align-items: flex-start; flex-direction: column; }
+    .review-fields input, .review-fields textarea { width: 100%; }
+    .review-fields textarea { min-height: 58px; resize: vertical; }
+    .suggestion { border-top: 1px solid var(--border); padding: 9px 0; }
+    .suggestion:first-of-type { border-top: 0; }
+    .suggestion-head { display: flex; gap: 8px; justify-content: space-between; }
+    .suggestion-meta { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+    .suggestion-actions { display: flex; gap: 6px; margin-top: 7px; }
+    .suggestion-status { text-transform: uppercase; font-size: 10px; font-weight: 700; color: var(--unknown); }
+    .dialog-nav { min-width: 42px; }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
     @media (max-width: 620px) {
-      .grid { grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); }
-      .media { height: 180px; }
+      body[data-density="comfortable"] { --card-min: 145px; --media-height: 180px; }
+      body[data-density="cinematic"] { --card-min: 220px; --media-height: 260px; }
       .filters label { width: 100%; }
       .transfer-bar label { width: 100%; }
       input[type="text"], select { flex: 1; min-width: 0; }
+      .filter-field { width: 100%; align-items: flex-start; flex-direction: column; }
+      .combobox { min-width: 0; width: 100%; }
+      .detail-layout { grid-template-columns: 1fr; }
+      .detail-image-wrap { height: 52vh; }
+      .detail-info { max-height: none; }
     }
   </style>
 </head>
-<body data-reveal-nsfw="false">
+<body data-reveal-nsfw="false" data-density="comfortable" data-fit="contain">
   <header>
     <div>
       <h1>Wallpaper Library</h1>
@@ -188,6 +311,38 @@
       </label>
     </section>
 
+    <section class="preset-bar" aria-label="Named gallery views">
+      <strong>Views</strong>
+      <button type="button" data-preset="recent">Recently added</button>
+      <button type="button" data-preset="desktop-4k">Desktop 4K</button>
+      <button type="button" data-preset="portrait">Portrait</button>
+      <button type="button" data-preset="needs-rating">Needs rating</button>
+      <button type="button" data-preset="least-tagged">Least tagged</button>
+      <button type="button" data-preset="shuffle">Shuffle</button>
+      <button id="reshuffle" type="button" hidden>Reshuffle</button>
+    </section>
+
+    <section class="presentation-bar" aria-label="Gallery presentation">
+      <strong>Presentation</strong>
+      <label>Density <select id="density">
+        <option value="compact">Compact</option>
+        <option value="comfortable">Comfortable</option>
+        <option value="cinematic">Cinematic</option>
+      </select></label>
+      <label>Image fit <select id="fit">
+        <option value="contain">Contain</option>
+        <option value="crop">Crop</option>
+      </select></label>
+      <span class="count">Crop changes only this view; canonical files are untouched.</span>
+    </section>
+
+    <section id="active-filters" class="active-filter-bar" aria-label="Active filters" aria-live="polite" hidden>
+      <strong>Active</strong>
+      <span id="active-filter-chips"></span>
+      <span class="spacer"></span>
+      <button id="clear-all" type="button">Clear all</button>
+    </section>
+
     <form id="filters" class="filters">
       <label>Sort <select id="sort">
         <option value="newest">Recently downloaded</option>
@@ -200,11 +355,24 @@
         <option value="source">Source A–Z</option>
         <option value="filename">Filename A–Z</option>
         <option value="path">Folder / path</option>
+        <option value="least_tagged">Least tagged</option>
+        <option value="rating_confidence">Lowest rating confidence</option>
+        <option value="shuffle">Seeded shuffle</option>
       </select></label>
       <label>Source <select id="source"><option value="">All</option></select></label>
       <label>Orientation <select id="orientation"><option value="">All</option></select></label>
       <label>Resolution <select id="bucket"><option value="">All</option></select></label>
-      <label>Exact tag <input id="tag" type="text" maxlength="120" placeholder="e.g. landscape"></label>
+      <div class="filter-field">
+        <label id="tag-label" for="tag">Exact tag</label>
+        <div class="combobox">
+          <input id="tag" type="text" maxlength="120" placeholder="Start typing a provider tag"
+                 role="combobox" aria-autocomplete="list" aria-expanded="false"
+                 aria-controls="tag-options" aria-describedby="tag-assist-status"
+                 aria-activedescendant="" autocomplete="off">
+          <ul id="tag-options" class="tag-options" role="listbox" aria-label="Counted provider tag suggestions" hidden></ul>
+          <div id="tag-assist-status" class="assist" aria-live="polite">Exact authoritative provider tags only.</div>
+        </div>
+      </div>
       <label>Franchise <input id="franchise" type="text" maxlength="120" placeholder="exact name"></label>
       <button type="submit">Apply filters</button>
       <button id="clear" type="button">Clear</button>
@@ -230,13 +398,75 @@
     </section>
   </main>
 
+  <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-title" aria-describedby="detail-status">
+    <div class="detail-header">
+      <button id="detail-prev" class="dialog-nav" type="button" aria-label="Previous loaded wallpaper">←</button>
+      <h2 id="detail-title">Wallpaper details</h2>
+      <button id="detail-next" class="dialog-nav" type="button" aria-label="Next loaded wallpaper">→</button>
+      <button id="detail-close" type="button" aria-label="Close wallpaper details">Close</button>
+    </div>
+    <div class="detail-layout">
+      <div class="detail-visual">
+        <div class="detail-image-wrap">
+          <img id="detail-image" class="detail-image" width="1280" height="720" alt="">
+        </div>
+        <div id="detail-status" class="detail-status" aria-live="polite"></div>
+        <div class="detail-actions">
+          <a id="detail-original" class="primary" target="_blank" rel="noopener">Open original</a>
+          <span id="detail-rating-badge" class="tag"></span>
+        </div>
+      </div>
+      <div class="detail-info">
+        <h3>Indexed metadata</h3>
+        <dl id="detail-facts" class="facts"></dl>
+        <h3>Provider tags</h3>
+        <div id="detail-provider-tags"></div>
+        <h3>Reviewable visual suggestions</h3>
+        <div class="suggestion-boundary">
+          <div class="assist">Machine suggestions remain separate from provider evidence, filters, tag counts, and content ratings—even after review.</div>
+          <div class="review-fields">
+            <label for="suggestion-reviewer">Reviewer
+              <input id="suggestion-reviewer" type="text" maxlength="200" autocomplete="username" placeholder="Required to accept or reject">
+            </label>
+            <label for="suggestion-note">Decision note (optional)
+              <textarea id="suggestion-note" maxlength="2000"></textarea>
+            </label>
+          </div>
+          <div id="suggestion-status" class="assist" aria-live="polite"></div>
+          <div id="detail-suggestions"></div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
   <script>
   (function () {
     'use strict';
     var BATCH_SIZE = 48;
+    var MAX_SHUFFLE_SEED = 2147483647;
+    var RATINGS = ['all', 'sfw', 'suggestive', 'nsfw', 'unknown'];
+    var SORTS = [
+      'newest', 'oldest', 'resolution_desc', 'resolution_asc', 'size_desc',
+      'size_asc', 'franchise', 'source', 'filename', 'path', 'least_tagged',
+      'rating_confidence', 'shuffle'
+    ];
+    var SOURCES = ['', 'wallhaven', 'zerochan', 'anime-pictures', 'unknown'];
+    var ORIENTATIONS = ['', 'landscape', 'portrait', 'square', 'unknown'];
+    var BUCKETS = ['', '4K', '1440p', '1080p', '720p', 'SD', '_UnknownResolution', 'unknown'];
+    var DENSITIES = ['compact', 'comfortable', 'cinematic'];
+    var FITS = ['contain', 'crop'];
+    var PRESETS = {
+      'recent': {label: 'Recently added', rating: 'sfw', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'newest'},
+      'desktop-4k': {label: 'Desktop 4K', rating: 'sfw', source: '', orientation: 'landscape', bucket: '4K', tag: '', franchise: '', sort: 'newest'},
+      'portrait': {label: 'Portrait', rating: 'sfw', source: '', orientation: 'portrait', bucket: '', tag: '', franchise: '', sort: 'newest'},
+      'needs-rating': {label: 'Needs rating', rating: 'unknown', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'rating_confidence'},
+      'least-tagged': {label: 'Least tagged', rating: 'sfw', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'least_tagged'},
+      'shuffle': {label: 'Shuffle', rating: 'sfw', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'shuffle'}
+    };
     var state = {
       rating: 'sfw', source: '', orientation: '', bucket: '', tag: '',
-      franchise: '', sort: 'newest'
+      franchise: '', sort: 'newest', seed: null, density: 'comfortable',
+      fit: 'contain', preset: ''
     };
     var facets = null;
     var grid = document.getElementById('grid');
@@ -255,6 +485,7 @@
     var loading = false;
     var seenIds = new Set();
     var loadedItems = new Map();
+    var loadedItemIds = [];
     var selectedIds = new Set();
     var selectedNames = new Map();
     var transferTargets = [];
@@ -268,22 +499,87 @@
     var transferTarget = document.getElementById('transfer-target');
     var sendSelectedButton = document.getElementById('send-selected');
     var transferStatus = document.getElementById('transfer-status');
+    var tagInput = document.getElementById('tag');
+    var tagOptions = document.getElementById('tag-options');
+    var tagAssistStatus = document.getElementById('tag-assist-status');
+    var autocompleteTimer = null;
+    var autocompleteController = null;
+    var autocompleteGeneration = 0;
+    var autocompleteItems = [];
+    var autocompleteIndex = -1;
+    var detailDialog = document.getElementById('detail-dialog');
+    var detailImage = document.getElementById('detail-image');
+    var detailOriginal = document.getElementById('detail-original');
+    var detailStatus = document.getElementById('detail-status');
+    var detailItemId = null;
+    var detailOpener = null;
+    var detailLoadingOriginal = false;
+    var detailClosing = false;
+    var fallbackBodyOverflow = '';
+    var fallbackSurfaceState = [];
+    var pendingSuggestionReviews = new Set();
+
+    function allowed(value, values, fallback) {
+      return values.includes(value) ? value : fallback;
+    }
+
+    function exactText(value) {
+      var cleaned = String(value || '').trim();
+      if (!cleaned || cleaned.length > 120 || /[\u0000-\u001f\u007f]/.test(cleaned)) return '';
+      return cleaned;
+    }
+
+    function validSeed(value) {
+      var parsed = Number(value);
+      return Number.isInteger(parsed) && parsed > 0 && parsed <= MAX_SHUFFLE_SEED ? parsed : null;
+    }
+
+    function newShuffleSeed() {
+      var values = new Uint32Array(1);
+      if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+        window.crypto.getRandomValues(values);
+        return (values[0] % MAX_SHUFFLE_SEED) + 1;
+      }
+      return (Math.floor((Date.now() + performance.now()) % MAX_SHUFFLE_SEED) || 1);
+    }
+
+    function ensureShuffleSeed() {
+      if (state.sort === 'shuffle' && !validSeed(state.seed)) state.seed = newShuffleSeed();
+    }
+
+    function presetMatches(identifier) {
+      var preset = PRESETS[identifier];
+      if (!preset) return false;
+      var matches = ['rating', 'source', 'orientation', 'bucket', 'tag', 'franchise', 'sort'].every(function (key) {
+        return state[key] === preset[key];
+      });
+      return matches && (identifier !== 'shuffle' || Boolean(validSeed(state.seed)));
+    }
+
+    function reconcilePreset() {
+      if (state.preset && !presetMatches(state.preset)) state.preset = '';
+    }
 
     function readUrl() {
       var p = new URLSearchParams(location.search);
-      state.rating = p.get('rating') || 'sfw';
-      if (!['all', 'sfw', 'suggestive', 'nsfw', 'unknown'].includes(state.rating)) state.rating = 'sfw';
-      ['source', 'orientation', 'bucket', 'tag', 'franchise'].forEach(function (key) {
-        state[key] = p.get(key) || '';
-      });
-      state.sort = p.get('sort') || 'newest';
-      if (![
-        'newest', 'oldest', 'resolution_desc', 'resolution_asc', 'size_desc',
-        'size_asc', 'franchise', 'source', 'filename', 'path'
-      ].includes(state.sort)) state.sort = 'newest';
+      state.rating = allowed(p.get('rating') || 'sfw', RATINGS, 'sfw');
+      state.source = allowed(p.get('source') || '', SOURCES, '');
+      state.orientation = allowed(p.get('orientation') || '', ORIENTATIONS, '');
+      state.bucket = allowed(p.get('bucket') || '', BUCKETS, '');
+      state.tag = exactText(p.get('tag'));
+      state.franchise = exactText(p.get('franchise'));
+      state.sort = allowed(p.get('sort') || 'newest', SORTS, 'newest');
+      state.seed = validSeed(p.get('seed'));
+      state.density = allowed(p.get('density') || 'comfortable', DENSITIES, 'comfortable');
+      state.fit = allowed(p.get('fit') || 'contain', FITS, 'contain');
+      state.preset = Object.prototype.hasOwnProperty.call(PRESETS, p.get('preset')) ? p.get('preset') : '';
+      ensureShuffleSeed();
+      reconcilePreset();
     }
 
     function syncUrl() {
+      reconcilePreset();
+      ensureShuffleSeed();
       var url = new URL(location.href);
       if (state.rating === 'sfw') url.searchParams.delete('rating');
       else url.searchParams.set('rating', state.rating);
@@ -293,15 +589,52 @@
       });
       if (state.sort === 'newest') url.searchParams.delete('sort');
       else url.searchParams.set('sort', state.sort);
+      if (state.sort === 'shuffle') url.searchParams.set('seed', String(state.seed));
+      else url.searchParams.delete('seed');
+      if (state.density === 'comfortable') url.searchParams.delete('density');
+      else url.searchParams.set('density', state.density);
+      if (state.fit === 'contain') url.searchParams.delete('fit');
+      else url.searchParams.set('fit', state.fit);
+      if (state.preset && presetMatches(state.preset)) url.searchParams.set('preset', state.preset);
+      else url.searchParams.delete('preset');
       url.searchParams.delete('offset');
       url.searchParams.delete('limit');
       history.replaceState(null, '', url);
     }
 
+    function applyPresentation() {
+      document.body.dataset.density = state.density;
+      document.body.dataset.fit = state.fit;
+      document.getElementById('density').value = state.density;
+      document.getElementById('fit').value = state.fit;
+      syncUrl();
+    }
+
+    function updateControls() {
+      document.getElementById('sort').value = state.sort;
+      document.getElementById('source').value = state.source;
+      document.getElementById('orientation').value = state.orientation;
+      document.getElementById('bucket').value = state.bucket;
+      tagInput.value = state.tag;
+      document.getElementById('franchise').value = state.franchise;
+      document.querySelectorAll('[data-preset]').forEach(function (button) {
+        var active = button.dataset.preset === state.preset && presetMatches(state.preset);
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      document.getElementById('reshuffle').hidden = state.sort !== 'shuffle';
+      applyPresentation();
+      renderActiveFilterChips();
+      paintRatingTabs();
+    }
+
     function setSelect(id, values, selected) {
       var select = document.getElementById(id);
       while (select.options.length > 1) select.remove(1);
-      Object.keys(values || {}).forEach(function (value) {
+      var allowlists = {source: SOURCES, orientation: ORIENTATIONS, bucket: BUCKETS};
+      Object.keys(values || {}).filter(function (value) {
+        return !allowlists[id] || allowlists[id].includes(value);
+      }).forEach(function (value) {
         var option = document.createElement('option');
         option.value = value;
         option.textContent = value + ' (' + Number(values[value]).toLocaleString() + ')';
@@ -328,12 +661,74 @@
       setSelect('source', facets.sources, state.source);
       setSelect('orientation', facets.orientations, state.orientation);
       setSelect('bucket', facets.buckets, state.bucket);
+      updateControls();
       paintRatingTabs();
       statusEl.className = data.verified ? 'banner' : 'banner warn';
       var verifiedText = data.verified ? 'Verified snapshot.' : 'Working snapshot — not currently verified.';
       statusEl.textContent = verifiedText + ' ' + data.reason +
         ' Indexed: ' + Number(facets.indexed_images || 0).toLocaleString() +
         '. Unknown content remains separate from SFW.';
+    }
+
+    function applyPreset(identifier) {
+      var preset = PRESETS[identifier];
+      if (!preset) return;
+      ['rating', 'source', 'orientation', 'bucket', 'tag', 'franchise', 'sort'].forEach(function (key) {
+        state[key] = preset[key];
+      });
+      state.preset = identifier;
+      ensureShuffleSeed();
+      closeAutocomplete();
+      updateControls();
+      resetFeed();
+    }
+
+    function clearNavigationFilters() {
+      state.rating = 'sfw';
+      state.source = '';
+      state.orientation = '';
+      state.bucket = '';
+      state.tag = '';
+      state.franchise = '';
+      state.sort = 'newest';
+      state.preset = '';
+      closeAutocomplete();
+      updateControls();
+      resetFeed();
+    }
+
+    function removeFilter(key) {
+      if (key === 'rating') state.rating = 'sfw';
+      else if (key === 'sort') state.sort = 'newest';
+      else if (key === 'preset') state.preset = '';
+      else state[key] = '';
+      reconcilePreset();
+      updateControls();
+      resetFeed();
+    }
+
+    function renderActiveFilterChips() {
+      var section = document.getElementById('active-filters');
+      var root = document.getElementById('active-filter-chips');
+      var chips = [];
+      if (state.preset) chips.push(['preset', 'View: ' + PRESETS[state.preset].label]);
+      if (state.rating !== 'sfw') chips.push(['rating', 'Rating: ' + state.rating]);
+      if (state.source) chips.push(['source', 'Source: ' + state.source]);
+      if (state.orientation) chips.push(['orientation', 'Orientation: ' + state.orientation]);
+      if (state.bucket) chips.push(['bucket', 'Resolution: ' + state.bucket]);
+      if (state.tag) chips.push(['tag', 'Tag: ' + state.tag]);
+      if (state.franchise) chips.push(['franchise', 'Franchise: ' + state.franchise]);
+      if (state.sort !== 'newest') chips.push(['sort', 'Sort: ' + state.sort.replaceAll('_', ' ')]);
+      root.replaceChildren();
+      chips.forEach(function (entry) {
+        var button = text('button', 'filter-chip', entry[1]);
+        button.type = 'button';
+        button.title = 'Remove ' + entry[1];
+        button.setAttribute('aria-label', 'Remove ' + entry[1]);
+        button.addEventListener('click', function () { removeFilter(entry[0]); });
+        root.appendChild(button);
+      });
+      section.hidden = chips.length === 0;
     }
 
     function setTransferStatus(message, kind) {
@@ -343,7 +738,7 @@
 
     function transferableLoadedItems() {
       return Array.from(loadedItems.values()).filter(function (item) {
-        return item.exists && item.url;
+        return item.exists && item.original_url;
       });
     }
 
@@ -362,14 +757,22 @@
       sendSelectedButton.textContent = activeTransferJob ? 'Sending…' : 'Send selected';
       grid.querySelectorAll('.tile[data-image-id]').forEach(function (tile) {
         var id = Number(tile.dataset.imageId);
+        var item = loadedItems.get(id);
         var selected = selectedIds.has(id);
         tile.classList.toggle('selected', selected);
         var checkbox = tile.querySelector('.select-toggle input');
-        if (checkbox) checkbox.checked = selected;
+        if (checkbox) {
+          checkbox.checked = selected;
+          checkbox.disabled = Boolean(activeTransferJob) || !item || !item.exists || !item.original_url;
+        }
       });
     }
 
     function setItemSelected(item, shouldSelect) {
+      if (activeTransferJob) {
+        updateSelectionUi();
+        return false;
+      }
       if (shouldSelect && !selectedIds.has(item.id)) {
         if (selectedIds.size >= transferMaxItems) {
           setTransferStatus('A transfer can contain at most ' + transferMaxItems + ' wallpapers.', 'error');
@@ -497,9 +900,143 @@
         if (state[key]) url.searchParams.set(key, state[key]);
       });
       url.searchParams.set('sort', state.sort);
+      if (state.sort === 'shuffle') url.searchParams.set('shuffle_seed', String(state.seed));
       url.searchParams.set('offset', String(offset));
       url.searchParams.set('limit', String(BATCH_SIZE));
       return url;
+    }
+
+    function closeAutocomplete() {
+      if (autocompleteTimer) window.clearTimeout(autocompleteTimer);
+      autocompleteTimer = null;
+      if (autocompleteController) autocompleteController.abort();
+      autocompleteController = null;
+      autocompleteGeneration += 1;
+      autocompleteItems = [];
+      autocompleteIndex = -1;
+      tagOptions.replaceChildren();
+      tagOptions.hidden = true;
+      tagInput.setAttribute('aria-expanded', 'false');
+      tagInput.setAttribute('aria-activedescendant', '');
+    }
+
+    function setAutocompleteIndex(index) {
+      if (!autocompleteItems.length) {
+        autocompleteIndex = -1;
+        tagInput.setAttribute('aria-activedescendant', '');
+        return;
+      }
+      autocompleteIndex = (index + autocompleteItems.length) % autocompleteItems.length;
+      tagOptions.querySelectorAll('[role="option"]').forEach(function (option, optionIndex) {
+        var active = optionIndex === autocompleteIndex;
+        option.setAttribute('aria-selected', active ? 'true' : 'false');
+        if (active) option.scrollIntoView({block: 'nearest'});
+      });
+      tagInput.setAttribute('aria-activedescendant', 'tag-option-' + autocompleteGeneration + '-' + autocompleteIndex);
+    }
+
+    function applyExactTag(name) {
+      var exact = exactText(name);
+      if (!exact) return;
+      state.tag = exact;
+      reconcilePreset();
+      closeAutocomplete();
+      updateControls();
+      resetFeed();
+    }
+
+    function renderAutocomplete(items) {
+      autocompleteItems = Array.isArray(items) ? items : [];
+      autocompleteIndex = -1;
+      tagOptions.replaceChildren();
+      autocompleteItems.forEach(function (item, index) {
+        var option = document.createElement('li');
+        option.id = 'tag-option-' + autocompleteGeneration + '-' + index;
+        option.className = 'tag-option';
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', 'false');
+        option.appendChild(text('strong', '', item.name));
+        var context = [item.type || 'unknown type', item.source || 'unknown source'];
+        if (item.provenance) context.push(item.provenance);
+        context.push(Number(item.image_count || 0).toLocaleString() + ' images');
+        option.appendChild(text('span', '', context.join(' · ')));
+        option.addEventListener('pointerdown', function (event) {
+          event.preventDefault();
+        });
+        option.addEventListener('click', function (event) {
+          event.preventDefault();
+          applyExactTag(item.name);
+        });
+        tagOptions.appendChild(option);
+      });
+      var hasOptions = autocompleteItems.length > 0;
+      tagOptions.hidden = !hasOptions;
+      tagInput.setAttribute('aria-expanded', hasOptions ? 'true' : 'false');
+      tagAssistStatus.textContent = autocompleteItems.length ?
+        autocompleteItems.length + ' counted provider tag suggestions.' :
+        'No authoritative provider tags match.';
+    }
+
+    async function fetchAutocomplete(prefix, generation) {
+      if (autocompleteController) autocompleteController.abort();
+      autocompleteController = typeof AbortController === 'function' ? new AbortController() : null;
+      var url = new URL('/api/library/tags', location.origin);
+      url.searchParams.set('prefix', prefix);
+      url.searchParams.set('limit', '20');
+      try {
+        var options = {cache: 'no-store'};
+        if (autocompleteController) options.signal = autocompleteController.signal;
+        var response = await fetch(url, options);
+        var data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Tag lookup failed');
+        if (generation !== autocompleteGeneration || tagInput.value.trim() !== prefix) return;
+        autocompleteController = null;
+        renderAutocomplete(data.items);
+      } catch (error) {
+        if (generation !== autocompleteGeneration || error.name === 'AbortError') return;
+        autocompleteController = null;
+        closeAutocomplete();
+        tagAssistStatus.textContent = 'Could not load tag suggestions: ' + error.message;
+      }
+    }
+
+    function queueAutocomplete() {
+      if (autocompleteTimer) window.clearTimeout(autocompleteTimer);
+      if (autocompleteController) autocompleteController.abort();
+      autocompleteController = null;
+      autocompleteGeneration += 1;
+      var generation = autocompleteGeneration;
+      var prefix = tagInput.value.trim();
+      if (!prefix) {
+        closeAutocomplete();
+        tagAssistStatus.textContent = 'Exact authoritative provider tags only.';
+        return;
+      }
+      if (prefix.length > 120) {
+        closeAutocomplete();
+        tagAssistStatus.textContent = 'Tag prefixes are limited to 120 characters.';
+        return;
+      }
+      autocompleteTimer = window.setTimeout(function () {
+        autocompleteTimer = null;
+        fetchAutocomplete(prefix, generation);
+      }, 220);
+    }
+
+    function handleAutocompleteKey(event) {
+      if (event.key === 'ArrowDown' && autocompleteItems.length) {
+        event.preventDefault();
+        setAutocompleteIndex(autocompleteIndex + 1);
+      } else if (event.key === 'ArrowUp' && autocompleteItems.length) {
+        event.preventDefault();
+        setAutocompleteIndex(autocompleteIndex - 1);
+      } else if (event.key === 'Enter' && autocompleteIndex >= 0) {
+        event.preventDefault();
+        applyExactTag(autocompleteItems[autocompleteIndex].name);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        closeAutocomplete();
+      }
     }
 
     function text(tag, className, value) {
@@ -531,6 +1068,58 @@
       });
     }
 
+    function tagPriority(tag) {
+      var type = String(tag.type || '').toLowerCase();
+      if (/franchise|series|copyright/.test(type)) return 0;
+      if (/character|person/.test(type)) return 1;
+      if (/subject|content|theme|object/.test(type)) return 2;
+      if (/artist|style|medium/.test(type)) return 3;
+      if (/general|unknown|tag/.test(type)) return 4;
+      if (/search|structural|technical/.test(type)) return 6;
+      return 5;
+    }
+
+    function diverseCardTags(tags) {
+      var seen = new Set();
+      var sorted = (Array.isArray(tags) ? tags : []).slice().sort(function (left, right) {
+        return tagPriority(left) - tagPriority(right) || String(left.name).localeCompare(String(right.name));
+      }).filter(function (tag) {
+        var key = String(tag.name || '').trim().toLocaleLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      var selected = [];
+      var remainder = [];
+      var usedPriorities = new Set();
+      sorted.forEach(function (tag) {
+        var priority = tagPriority(tag);
+        if (selected.length < 7 && !usedPriorities.has(priority)) {
+          usedPriorities.add(priority);
+          selected.push(tag);
+        } else {
+          remainder.push(tag);
+        }
+      });
+      return selected.concat(remainder.slice(0, 7 - selected.length));
+    }
+
+    function providerTagButton(tag) {
+      var button = text('button', 'tag', tag.name);
+      button.type = 'button';
+      var description = 'Filter by exact tag ' + tag.name + '. Type: ' + (tag.type || 'unknown') +
+        '. Source: ' + (tag.source || 'unknown') + '. Provenance: ' + (tag.provenance || 'unknown') + '.';
+      button.title = description;
+      button.setAttribute('aria-label', description);
+      button.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (dialogIsOpen()) closeDetail(false);
+        applyExactTag(tag.name);
+      });
+      return button;
+    }
+
     function renderItem(item) {
       var figure = document.createElement('figure');
       figure.className = 'tile rating-' + item.content_rating;
@@ -542,11 +1131,13 @@
       var selectBox = document.createElement('input');
       selectBox.type = 'checkbox';
       selectBox.checked = selectedIds.has(item.id);
-      selectBox.disabled = !item.exists || !item.url;
+      selectBox.disabled = Boolean(activeTransferJob) || !item.exists || !item.original_url;
       selectBox.setAttribute('aria-label', 'Select ' + item.filename + ' for transfer');
+      selectBox.addEventListener('click', function (event) { event.stopPropagation(); });
       selectBox.addEventListener('change', function () {
         if (!setItemSelected(item, selectBox.checked)) selectBox.checked = false;
       });
+      selectLabel.addEventListener('click', function (event) { event.stopPropagation(); });
       selectLabel.appendChild(selectBox);
       selectLabel.appendChild(document.createTextNode(' Select'));
       figure.appendChild(selectLabel);
@@ -554,20 +1145,30 @@
       badge.title = item.rating_basis + (item.rating_reasons.length ? ': ' + item.rating_reasons.join(', ') : '');
       figure.appendChild(badge);
 
-      var media = document.createElement(item.url && item.exists ? 'a' : 'div');
+      var media = document.createElement('button');
+      media.type = 'button';
       media.className = 'media';
-      if (item.url && item.exists) {
-        media.href = item.url;
-        media.target = '_blank';
-        media.rel = 'noopener';
+      media.setAttribute('aria-label', 'Open details for ' + item.filename);
+      media.addEventListener('click', function (event) {
+        event.preventDefault();
+        openDetail(item.id, media);
+      });
+      if (item.thumbnail_url) {
         var img = document.createElement('img');
         img.loading = 'lazy';
         img.decoding = 'async';
-        img.src = item.url;
+        img.width = Number(item.width) || 640;
+        img.height = Number(item.height) || 640;
+        img.src = item.thumbnail_url;
         img.alt = item.filename;
+        img.addEventListener('error', function () {
+          img.remove();
+          media.appendChild(text('div', 'missing', 'Thumbnail unavailable — open details'));
+        }, {once: true});
         media.appendChild(img);
       } else {
-        media.appendChild(text('div', 'missing', 'Indexed path is currently missing'));
+        media.appendChild(text('div', 'missing', item.exists ?
+          'Thumbnail unavailable — open details' : 'Indexed path is currently missing'));
       }
       figure.appendChild(media);
 
@@ -582,12 +1183,338 @@
       if (fileFacts.length) caption.appendChild(text('div', 'meta', fileFacts.join(' · ')));
       var tags = document.createElement('div');
       tags.className = 'tags';
-      (item.tags || []).slice(0, 7).forEach(function (tag) {
-        tags.appendChild(text('span', 'tag', tag.name));
+      diverseCardTags(item.tags).forEach(function (tag) {
+        tags.appendChild(providerTagButton(tag));
       });
       caption.appendChild(tags);
       figure.appendChild(caption);
       return figure;
+    }
+
+    function setDetailStatus(message, kind) {
+      detailStatus.className = 'detail-status' + (kind ? ' ' + kind : '');
+      detailStatus.textContent = message || '';
+    }
+
+    function appendFact(label, value) {
+      var facts = document.getElementById('detail-facts');
+      facts.appendChild(text('dt', '', label));
+      var detail = document.createElement('dd');
+      if (value instanceof Node) detail.appendChild(value);
+      else detail.textContent = value == null || value === '' ? '—' : String(value);
+      facts.appendChild(detail);
+    }
+
+    function renderDetailFacts(item) {
+      var facts = document.getElementById('detail-facts');
+      facts.replaceChildren();
+      appendFact('Title', item.franchise || item.filename);
+      appendFact('Filename', item.filename);
+      appendFact('Dimensions', item.width && item.height ? item.width + '×' + item.height : 'unknown');
+      appendFact('Resolution', item.resolution_bucket || 'unknown');
+      appendFact('Orientation', item.orientation || 'unknown');
+      appendFact('Source', item.source || 'unknown');
+      if (item.source_url) {
+        var sourceLink = text('a', '', 'Open provider page');
+        sourceLink.href = item.source_url;
+        sourceLink.target = '_blank';
+        sourceLink.rel = 'noopener';
+        appendFact('Source link', sourceLink);
+      } else {
+        appendFact('Source link', 'Unavailable');
+      }
+      appendFact('Downloaded', formatDownloadedAt(item.downloaded_at) || 'unknown');
+      appendFact('File size', formatBytes(item.size_bytes) || 'unknown');
+      appendFact('Extension', item.extension || 'unknown');
+      appendFact('Content rating', item.content_rating || 'unknown');
+      var confidence = Number(item.rating_confidence);
+      appendFact('Rating confidence', Number.isFinite(confidence) ? Math.round(confidence * 100) + '%' : 'unknown');
+      appendFact('Rating basis', item.rating_basis || 'unknown');
+      appendFact('Rating reasons', (item.rating_reasons || []).join(', ') || 'No authoritative signal');
+      appendFact('Provider tag count', Number(item.tag_count || 0).toLocaleString());
+      appendFact('Enrichment', item.enrichment_status || 'unknown');
+      var coverage = item.provider_coverage || {};
+      appendFact('Coverage status', coverage.status || 'unknown');
+      appendFact('Authoritative count', Number(coverage.authoritative_tag_count || 0).toLocaleString());
+      appendFact('Tag provenances', (coverage.provenances || []).join(', ') || 'None indexed');
+    }
+
+    function renderProviderTags(item) {
+      var root = document.getElementById('detail-provider-tags');
+      root.replaceChildren();
+      var groups = new Map();
+      (item.tags || []).forEach(function (tag) {
+        var type = String(tag.type || 'unknown');
+        if (!groups.has(type)) groups.set(type, []);
+        groups.get(type).push(tag);
+      });
+      if (!groups.size) {
+        root.appendChild(text('div', 'assist', 'No authoritative provider tags are indexed for this wallpaper.'));
+        return;
+      }
+      Array.from(groups.keys()).sort(function (left, right) {
+        return tagPriority({type: left}) - tagPriority({type: right}) || left.localeCompare(right);
+      }).forEach(function (type) {
+        var group = document.createElement('section');
+        group.className = 'tag-group';
+        group.appendChild(text('div', 'tag-group-title', type));
+        var tags = document.createElement('div');
+        tags.className = 'tags';
+        groups.get(type).forEach(function (tag) {
+          tags.appendChild(providerTagButton(tag));
+        });
+        group.appendChild(tags);
+        var evidence = Array.from(new Set(groups.get(type).map(function (tag) {
+          return (tag.source || 'unknown source') + ' · ' + (tag.provenance || 'unknown provenance');
+        })));
+        group.appendChild(text('div', 'suggestion-meta', evidence.join(' | ')));
+        root.appendChild(group);
+      });
+    }
+
+    async function reviewSuggestion(item, suggestion, reviewStatus, row) {
+      var reviewerInput = document.getElementById('suggestion-reviewer');
+      var noteInput = document.getElementById('suggestion-note');
+      var status = document.getElementById('suggestion-status');
+      var suggestionId = Number(suggestion.id);
+      if (pendingSuggestionReviews.has(suggestionId)) return;
+      var reviewer = reviewerInput.value.trim();
+      if (!reviewer) {
+        status.textContent = 'Enter a reviewer name before accepting or rejecting.';
+        reviewerInput.focus();
+        return;
+      }
+      try { sessionStorage.setItem('webgallery.suggestionReviewer', reviewer); } catch (error) {}
+      var controls = row.querySelectorAll('[data-suggestion-action]');
+      controls.forEach(function (control) { control.disabled = true; });
+      pendingSuggestionReviews.add(suggestionId);
+      status.textContent = 'Saving ' + reviewStatus + ' decision…';
+      var reviewedSuggestion = null;
+      var failure = null;
+      try {
+        var response = await fetch('/api/library/suggestions/' + encodeURIComponent(suggestionId), {
+          method: 'POST',
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            review_status: reviewStatus,
+            reviewer: reviewer,
+            decision_note: noteInput.value.trim() || null
+          })
+        });
+        var data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Suggestion review failed');
+        if (!data.suggestion || Number(data.suggestion.id) !== suggestionId) {
+          throw new Error('Suggestion review returned an unexpected identity');
+        }
+        item.tag_suggestions = (item.tag_suggestions || []).map(function (candidate) {
+          return Number(candidate.id) === suggestionId ? data.suggestion : candidate;
+        });
+        reviewedSuggestion = data.suggestion;
+      } catch (error) {
+        failure = error;
+      } finally {
+        pendingSuggestionReviews.delete(suggestionId);
+        if (dialogIsOpen() && detailItemId === item.id) {
+          if (reviewedSuggestion) {
+            status.textContent = 'Suggestion recorded as ' + reviewedSuggestion.review_status + '. It remains review-only.';
+            noteInput.value = '';
+          } else {
+            status.textContent = 'Could not save suggestion decision: ' + (failure ? failure.message : 'unknown error');
+          }
+          renderSuggestions(item);
+        }
+      }
+    }
+
+    function renderSuggestions(item) {
+      var root = document.getElementById('detail-suggestions');
+      root.replaceChildren();
+      var suggestions = Array.isArray(item.tag_suggestions) ? item.tag_suggestions : [];
+      if (!suggestions.length) {
+        root.appendChild(text('div', 'assist', 'No visual-model suggestions are attached to this wallpaper.'));
+        return;
+      }
+      suggestions.forEach(function (suggestion) {
+        var row = document.createElement('article');
+        row.className = 'suggestion suggestion-' + suggestion.review_status;
+        var head = document.createElement('div');
+        head.className = 'suggestion-head';
+        head.appendChild(text('strong', '', suggestion.label));
+        head.appendChild(text('span', 'suggestion-status', suggestion.review_status));
+        row.appendChild(head);
+        var confidence = Number(suggestion.confidence);
+        row.appendChild(text('div', 'suggestion-meta',
+          (Number.isFinite(confidence) ? Math.round(confidence * 100) + '% confidence' : 'unknown confidence') +
+          ' · generator ' + (suggestion.generator || 'unknown') +
+          ' · model ' + (suggestion.model_version || 'unknown')));
+        row.appendChild(text('div', 'suggestion-meta', 'Provenance: ' + (suggestion.provenance || 'unknown')));
+        row.appendChild(text('div', 'suggestion-meta', 'Created: ' +
+          (formatDownloadedAt(suggestion.created_at) || suggestion.created_at || 'unknown') +
+          (suggestion.reviewed_at ? ' · reviewed ' + (formatDownloadedAt(suggestion.reviewed_at) || suggestion.reviewed_at) : '')));
+        if (suggestion.reviewer) {
+          row.appendChild(text('div', 'suggestion-meta', 'Reviewed by ' + suggestion.reviewer +
+            (suggestion.decision_note ? ' · ' + suggestion.decision_note : '')));
+        }
+        if (suggestion.review_status === 'pending') {
+          var actions = document.createElement('div');
+          actions.className = 'suggestion-actions';
+          ['accepted', 'rejected'].forEach(function (decision) {
+            var button = text('button', '', decision === 'accepted' ? 'Accept' : 'Reject');
+            button.type = 'button';
+            button.dataset.suggestionAction = decision;
+            button.disabled = pendingSuggestionReviews.has(Number(suggestion.id));
+            button.addEventListener('click', function () {
+              reviewSuggestion(item, suggestion, decision, row);
+            });
+            actions.appendChild(button);
+          });
+          row.appendChild(actions);
+        }
+        root.appendChild(row);
+      });
+    }
+
+    function dialogIsOpen() {
+      return detailDialog.hasAttribute('open') || detailDialog.classList.contains('fallback-open');
+    }
+
+    function updateDetailNavigation() {
+      var index = loadedItemIds.indexOf(detailItemId);
+      document.getElementById('detail-prev').disabled = index <= 0;
+      document.getElementById('detail-next').disabled = index < 0 || index >= loadedItemIds.length - 1;
+    }
+
+    function loadDetailOriginal(item) {
+      if (!dialogIsOpen() || detailItemId !== item.id || !item.original_url) return;
+      detailLoadingOriginal = true;
+      setDetailStatus('Loading original on demand…');
+      detailImage.src = item.original_url;
+    }
+
+    function openDetail(itemId, opener) {
+      var item = loadedItems.get(Number(itemId));
+      if (!item) return;
+      var alreadyOpen = dialogIsOpen();
+      detailItemId = item.id;
+      if (opener) detailOpener = opener;
+      detailDialog.dataset.rating = item.content_rating || 'unknown';
+      document.getElementById('detail-title').textContent = item.franchise || item.filename;
+      document.getElementById('detail-rating-badge').textContent =
+        (item.content_rating || 'unknown') + ' · ' + (item.rating_basis || 'unknown basis');
+      renderDetailFacts(item);
+      renderProviderTags(item);
+      renderSuggestions(item);
+      document.getElementById('suggestion-status').textContent = '';
+      detailLoadingOriginal = false;
+      detailImage.removeAttribute('src');
+      detailImage.alt = item.filename;
+      detailImage.width = Number(item.width) || 1280;
+      detailImage.height = Number(item.height) || 720;
+      detailImage.hidden = !item.thumbnail_url && !item.original_url;
+      detailOriginal.removeAttribute('href');
+      detailOriginal.hidden = !item.original_url;
+      if (item.thumbnail_url) detailImage.src = item.thumbnail_url;
+      if (!item.exists) setDetailStatus('The indexed canonical file is currently missing.', 'error');
+      else if (!item.thumbnail_url) setDetailStatus('Thumbnail unavailable. The original will load after the dialog opens.');
+      else setDetailStatus('Thumbnail preview. Opening the original on demand…');
+      updateDetailNavigation();
+      if (!alreadyOpen) {
+        if (typeof detailDialog.showModal === 'function') {
+          detailDialog.showModal();
+        } else {
+          detailDialog.setAttribute('open', '');
+          detailDialog.setAttribute('role', 'dialog');
+          detailDialog.setAttribute('aria-modal', 'true');
+          detailDialog.classList.add('fallback-open');
+          fallbackBodyOverflow = document.body.style.overflow;
+          document.body.style.overflow = 'hidden';
+          fallbackSurfaceState = [];
+          document.querySelectorAll('body > header, body > main').forEach(function (surface) {
+            fallbackSurfaceState.push({
+              surface: surface,
+              inert: Boolean(surface.inert),
+              ariaHidden: surface.getAttribute('aria-hidden')
+            });
+            surface.inert = true;
+            surface.setAttribute('aria-hidden', 'true');
+          });
+        }
+        document.getElementById('detail-close').focus();
+      }
+      if (item.original_url) {
+        detailOriginal.href = item.original_url;
+        window.requestAnimationFrame(function () { loadDetailOriginal(item); });
+      }
+    }
+
+    function finalizeDetailClose() {
+      if (detailClosing) return;
+      detailClosing = true;
+      var opener = detailOpener;
+      var restore = detailDialog.dataset.restoreFocus !== 'false';
+      var usedFallback = detailDialog.classList.contains('fallback-open');
+      detailDialog.classList.remove('fallback-open');
+      detailDialog.removeAttribute('aria-modal');
+      if (usedFallback) {
+        document.body.style.overflow = fallbackBodyOverflow;
+        fallbackBodyOverflow = '';
+        fallbackSurfaceState.forEach(function (entry) {
+          entry.surface.inert = entry.inert;
+          if (entry.ariaHidden == null) entry.surface.removeAttribute('aria-hidden');
+          else entry.surface.setAttribute('aria-hidden', entry.ariaHidden);
+        });
+        fallbackSurfaceState = [];
+      }
+      detailImage.removeAttribute('src');
+      detailOriginal.removeAttribute('href');
+      detailLoadingOriginal = false;
+      detailItemId = null;
+      detailOpener = null;
+      detailDialog.dataset.restoreFocus = 'true';
+      detailClosing = false;
+      if (restore && opener && opener.isConnected) {
+        try { opener.focus({preventScroll: true}); }
+        catch (error) { opener.focus(); }
+      }
+    }
+
+    function closeDetail(restoreFocus) {
+      if (!dialogIsOpen()) return;
+      detailDialog.dataset.restoreFocus = restoreFocus === false ? 'false' : 'true';
+      if (typeof detailDialog.close === 'function' && detailDialog.hasAttribute('open')) {
+        detailDialog.close();
+      } else {
+        detailDialog.removeAttribute('open');
+        finalizeDetailClose();
+      }
+    }
+
+    function openAdjacentDetail(direction) {
+      var index = loadedItemIds.indexOf(detailItemId);
+      var nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= loadedItemIds.length) return;
+      openDetail(loadedItemIds[nextIndex], detailOpener);
+    }
+
+    function isInteractiveTarget(target) {
+      return Boolean(target && target.closest('button, a, input, textarea, select, [role="button"]'));
+    }
+
+    function trapFallbackFocus(event) {
+      if (event.key !== 'Tab' || !detailDialog.classList.contains('fallback-open')) return;
+      var focusable = Array.from(detailDialog.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled)'));
+      if (!focusable.length) return;
+      var first = focusable[0];
+      var last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
 
     function updateFeedStatus(message, showRetry) {
@@ -627,6 +1554,7 @@
         if (seenIds.has(item.id)) return;
         seenIds.add(item.id);
         loadedItems.set(item.id, item);
+        loadedItemIds.push(item.id);
         fragment.appendChild(renderItem(item));
         appended += 1;
         if (!item.exists) missingCount += 1;
@@ -641,6 +1569,7 @@
       }
       paintRatingTabs();
       updateSelectionUi();
+      if (dialogIsOpen()) updateDetailNavigation();
       syncUrl();
       updateFeedStatus();
       maybeFillViewport();
@@ -673,6 +1602,7 @@
     }
 
     function resetFeed() {
+      if (dialogIsOpen()) closeDetail(false);
       requestGeneration += 1;
       if (requestController) requestController.abort();
       requestController = null;
@@ -684,6 +1614,7 @@
       loading = false;
       seenIds.clear();
       loadedItems.clear();
+      loadedItemIds.length = 0;
       grid.replaceChildren();
       updateSelectionUi();
       syncUrl();
@@ -703,30 +1634,66 @@
 
     document.querySelectorAll('[data-rating]').forEach(function (button) {
       button.addEventListener('click', function () {
-        state.rating = button.dataset.rating;
+        state.rating = allowed(button.dataset.rating, RATINGS, 'sfw');
+        reconcilePreset();
+        updateControls();
         resetFeed();
       });
+    });
+    document.querySelectorAll('[data-preset]').forEach(function (button) {
+      button.addEventListener('click', function () { applyPreset(button.dataset.preset); });
+    });
+    document.getElementById('reshuffle').addEventListener('click', function () {
+      state.sort = 'shuffle';
+      state.seed = newShuffleSeed();
+      reconcilePreset();
+      updateControls();
+      resetFeed();
+    });
+    document.getElementById('density').addEventListener('change', function () {
+      state.density = allowed(this.value, DENSITIES, 'comfortable');
+      applyPresentation();
+    });
+    document.getElementById('fit').addEventListener('change', function () {
+      state.fit = allowed(this.value, FITS, 'contain');
+      applyPresentation();
     });
     document.getElementById('reveal').addEventListener('change', function () {
       document.body.dataset.revealNsfw = this.checked ? 'true' : 'false';
     });
     document.getElementById('filters').addEventListener('submit', function (event) {
       event.preventDefault();
-      ['source', 'orientation', 'bucket', 'tag', 'franchise'].forEach(function (key) {
-        state[key] = document.getElementById(key).value.trim();
-      });
+      state.source = allowed(document.getElementById('source').value, SOURCES, '');
+      state.orientation = allowed(document.getElementById('orientation').value, ORIENTATIONS, '');
+      state.bucket = allowed(document.getElementById('bucket').value, BUCKETS, '');
+      state.tag = exactText(tagInput.value);
+      state.franchise = exactText(document.getElementById('franchise').value);
+      reconcilePreset();
+      closeAutocomplete();
+      updateControls();
       resetFeed();
     });
     document.getElementById('clear').addEventListener('click', function () {
       state.source = state.orientation = state.bucket = state.tag = state.franchise = '';
-      ['source', 'orientation', 'bucket', 'tag', 'franchise'].forEach(function (key) {
-        document.getElementById(key).value = '';
-      });
+      reconcilePreset();
+      closeAutocomplete();
+      updateControls();
       resetFeed();
     });
+    document.getElementById('clear-all').addEventListener('click', clearNavigationFilters);
     document.getElementById('sort').addEventListener('change', function () {
-      state.sort = this.value;
+      state.sort = allowed(this.value, SORTS, 'newest');
+      ensureShuffleSeed();
+      reconcilePreset();
+      updateControls();
       resetFeed();
+    });
+    tagInput.addEventListener('input', queueAutocomplete);
+    tagInput.addEventListener('keydown', handleAutocompleteKey);
+    tagInput.addEventListener('focusout', function () {
+      window.setTimeout(function () {
+        if (document.activeElement !== tagInput && !tagOptions.contains(document.activeElement)) closeAutocomplete();
+      }, 0);
     });
     selectLoadedButton.addEventListener('click', function () {
       var loaded = transferableLoadedItems();
@@ -760,14 +1727,58 @@
     transferTarget.addEventListener('change', updateSelectionUi);
     sendSelectedButton.addEventListener('click', sendSelected);
     loadMoreButton.addEventListener('click', loadMore);
+    document.getElementById('detail-close').addEventListener('click', function () { closeDetail(true); });
+    document.getElementById('detail-prev').addEventListener('click', function () { openAdjacentDetail(-1); });
+    document.getElementById('detail-next').addEventListener('click', function () { openAdjacentDetail(1); });
+    detailDialog.addEventListener('close', finalizeDetailClose);
+    detailDialog.addEventListener('cancel', function (event) {
+      event.preventDefault();
+      closeDetail(true);
+    });
+    detailDialog.addEventListener('click', function (event) {
+      if (event.target === detailDialog) closeDetail(true);
+    });
+    detailDialog.addEventListener('keydown', function (event) {
+      trapFallbackFocus(event);
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeDetail(true);
+      } else if (!isInteractiveTarget(event.target) && event.key === 'ArrowLeft') {
+        event.preventDefault();
+        openAdjacentDetail(-1);
+      } else if (!isInteractiveTarget(event.target) && event.key === 'ArrowRight') {
+        event.preventDefault();
+        openAdjacentDetail(1);
+      }
+    });
+    detailImage.addEventListener('load', function () {
+      if (detailLoadingOriginal) {
+        detailLoadingOriginal = false;
+        setDetailStatus('Original loaded on demand.');
+      }
+    });
+    detailImage.addEventListener('error', function () {
+      var item = loadedItems.get(detailItemId);
+      if (detailLoadingOriginal && item && item.thumbnail_url) {
+        detailLoadingOriginal = false;
+        setDetailStatus('Original could not be loaded; showing the cached thumbnail.', 'error');
+        detailImage.src = item.thumbnail_url;
+      } else {
+        detailLoadingOriginal = false;
+        setDetailStatus('Preview could not be loaded.', 'error');
+      }
+    });
+    try {
+      document.getElementById('suggestion-reviewer').value = sessionStorage.getItem('webgallery.suggestionReviewer') || '';
+    } catch (error) {}
     window.addEventListener('beforeunload', function () {
       if (transferPollTimer) window.clearTimeout(transferPollTimer);
+      if (autocompleteTimer) window.clearTimeout(autocompleteTimer);
+      if (autocompleteController) autocompleteController.abort();
     });
 
     readUrl();
-    document.getElementById('sort').value = state.sort;
-    document.getElementById('tag').value = state.tag;
-    document.getElementById('franchise').value = state.franchise;
+    updateControls();
     startInfiniteScroll();
     loadStatus().catch(function (error) {
       statusEl.className = 'banner error';
