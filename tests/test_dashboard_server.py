@@ -416,6 +416,47 @@ class DashboardServerTests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
 
+    def test_library_facet_cache_detects_wal_only_commits(self) -> None:
+        main_before = self.db.stat()
+        with mock.patch.object(
+            dashboard_server.library_browser,
+            "library_facets",
+            side_effect=[{"generation": 1}, {"generation": 2}],
+        ) as facets:
+            status, _headers, first = self.json_request(
+                "GET", "/api/library/facets"
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(first["generation"], 1)
+
+            writer = sqlite3.connect(self.db)
+            try:
+                self.assertEqual(
+                    writer.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower(),
+                    "wal",
+                )
+                writer.execute(
+                    "UPDATE images SET indexed_at='wal-refresh' WHERE id=?",
+                    (self.image_id,),
+                )
+                writer.commit()
+                self.assertTrue(Path(str(self.db) + "-wal").is_file())
+                main_after = self.db.stat()
+                self.assertEqual(
+                    (main_before.st_mtime_ns, main_before.st_size),
+                    (main_after.st_mtime_ns, main_after.st_size),
+                )
+
+                status, _headers, second = self.json_request(
+                    "GET", "/api/library/facets"
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(second["generation"], 2)
+            finally:
+                writer.close()
+
+        self.assertEqual(facets.call_count, 2)
+
     def test_media_original_and_thumbnail_streaming(self) -> None:
         preview_url = "/media/preview/" + "/".join(
             quote(part, safe="")

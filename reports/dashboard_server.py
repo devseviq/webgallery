@@ -226,6 +226,28 @@ def _safe_last_message(value: object) -> str:
     return message[:80]
 
 
+def _sqlite_cache_key(database_path: Path) -> tuple[tuple[int, int] | None, ...]:
+    """Fingerprint the database plus WAL state used by read-only API caches."""
+
+    fingerprints: list[tuple[int, int] | None] = []
+    for path in (
+        database_path,
+        Path(str(database_path) + "-wal"),
+        Path(str(database_path) + "-shm"),
+    ):
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            fingerprints.append(None)
+        except OSError as exc:
+            raise RuntimeUnavailable("library index is unavailable") from exc
+        else:
+            fingerprints.append((stat.st_mtime_ns, stat.st_size))
+    if fingerprints[0] is None:
+        raise RuntimeUnavailable("library index is unavailable")
+    return tuple(fingerprints)
+
+
 def _operations_status(config: ServerConfig) -> dict[str, Any]:
     path = config.queue_state_path
     try:
@@ -641,11 +663,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return {key: values[0] for key, values in query.items()}
 
     def _library_facets(self) -> dict[str, Any]:
-        try:
-            stat = self.server.config.database_path.stat()
-        except OSError as exc:
-            raise RuntimeUnavailable("library index is unavailable") from exc
-        key = (stat.st_mtime_ns, stat.st_size)
+        key = _sqlite_cache_key(self.server.config.database_path)
         with self.server.facet_cache_lock:
             if self.server.facet_cache["key"] != key:
                 self.server.facet_cache["value"] = library_browser.library_facets(
