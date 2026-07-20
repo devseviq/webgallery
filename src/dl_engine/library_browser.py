@@ -1,20 +1,30 @@
-"""Read-only data helpers for the local wallpaper library browser."""
+"""Validated, path-safe data helpers for the local wallpaper browser."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-from typing import Any, Mapping
-from urllib.parse import quote
+import re
+from typing import Any, Iterable, Mapping
+from urllib.parse import urlsplit
 
 from .content_rating import CONTENT_RATINGS
 from . import index_library as index
 
 
+RESPONSE_SCHEMA_VERSION = 2
 DEFAULT_PAGE_SIZE = 48
 MAX_PAGE_SIZE = 100
 DEFAULT_SORT = "newest"
+MIN_SHUFFLE_SEED = 0
+MAX_SHUFFLE_SEED = 2_147_483_647
+MAX_AUTOCOMPLETE_PREFIX = 120
+MAX_AUTOCOMPLETE_LIMIT = 50
+MAX_REVIEWER_LENGTH = 200
+MAX_DECISION_NOTE_LENGTH = 2_000
+
+_SHA256_RE = re.compile(r"[0-9a-fA-F]{64}\Z")
 
 
 def _clean_filter(value: object) -> str | None:
@@ -36,29 +46,107 @@ def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> 
     return parsed
 
 
-def _serialize_row(row: index.ImageRow, library_root: Path) -> dict[str, Any]:
-    path = Path(row.path)
-    resolved_root = library_root.resolve()
+def _optional_bounded_int(
+    value: object, *, minimum: int, maximum: int
+) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    return _bounded_int(value, default=minimum, minimum=minimum, maximum=maximum)
+
+
+def _index_snapshot_mtime(db_path: Path) -> float:
+    """Return freshness across the main SQLite file and an active WAL."""
+
+    database = Path(db_path)
+    snapshot_mtime = database.stat().st_mtime
     try:
-        relative = path.resolve(strict=False).relative_to(resolved_root)
-    except (OSError, ValueError):
-        relative = None
+        return max(snapshot_mtime, Path(str(database) + "-wal").stat().st_mtime)
+    except FileNotFoundError:
+        return snapshot_mtime
 
-    exists = path.is_file()
-    url = None
-    if relative is not None:
-        url = quote("/library/" + relative.as_posix(), safe="/")
 
-    classification = row.content_rating
+def _canonical_file_exists(row: index.ImageRow, library_root: Path) -> bool:
+    """Return whether the indexed row resolves to a current canonical image."""
+
+    path = Path(row.path)
+    if not path.is_absolute():
+        return False
+    try:
+        root = Path(library_root).resolve(strict=True)
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(root)
+    except (FileNotFoundError, NotADirectoryError, OSError, ValueError):
+        return False
+    if not resolved.is_file() or resolved.suffix.casefold() not in index.IMAGE_EXTENSIONS:
+        return False
+    indexed_extension = str(row.ext or "").casefold().lstrip(".")
+    return not indexed_extension or indexed_extension == resolved.suffix.casefold().lstrip(".")
+
+
+def _serialize_tag(tag: index.IndexedTag) -> dict[str, Any]:
+    return {
+        "name": tag.name,
+        "type": tag.type,
+        "provenance": tag.provenance,
+        "source": tag.source,
+    }
+
+
+def _safe_source_url(value: object) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 2_048:
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.netloc:
+        return None
+    return value
+
+
+def _serialize_suggestion(suggestion: object) -> dict[str, Any]:
+    """Serialize a suggestion without confusing it with provider tags."""
+
+    return {
+        "id": int(getattr(suggestion, "id")),
+        "label": str(getattr(suggestion, "label")),
+        "normalized_label": str(getattr(suggestion, "normalized_label")),
+        "confidence": float(getattr(suggestion, "confidence")),
+        "generator": str(getattr(suggestion, "generator")),
+        "model_version": str(getattr(suggestion, "model_version")),
+        "provenance": str(getattr(suggestion, "provenance")),
+        "review_status": str(getattr(suggestion, "review_status")),
+        "created_at": str(getattr(suggestion, "created_at")),
+        "reviewed_at": getattr(suggestion, "reviewed_at"),
+        "reviewer": getattr(suggestion, "reviewer"),
+        "decision_note": getattr(suggestion, "decision_note"),
+    }
+
+
+def _serialize_row(row: index.ImageRow, library_root: Path) -> dict[str, Any]:
+    exists = _canonical_file_exists(row, Path(library_root))
+    original_url = f"/original/{row.id}" if exists and row.id > 0 else None
+    digest = str(row.sha256 or "")
+    thumbnail_url = (
+        f"/thumb/{digest.casefold()}.webp"
+        if exists and _SHA256_RE.fullmatch(digest)
+        else None
+    )
+    tags = [_serialize_tag(tag) for tag in row.tags]
+    provenances = sorted(
+        {tag["provenance"] for tag in tags if tag["provenance"]},
+        key=str.casefold,
+    )
+    suggestions = [
+        _serialize_suggestion(suggestion) for suggestion in row.tag_suggestions
+    ]
     return {
         "id": row.id,
-        "path": row.path,
-        "url": url,
+        "url": original_url,
+        "original_url": original_url,
+        "thumbnail_url": thumbnail_url,
         "exists": exists,
         "filename": row.filename,
         "source": row.source,
         "source_id": row.source_site_id,
-        "source_url": row.source_url,
+        "source_url": _safe_source_url(row.source_url),
         "width": row.width,
         "height": row.height,
         "orientation": row.orientation or "unknown",
@@ -66,22 +154,22 @@ def _serialize_row(row: index.ImageRow, library_root: Path) -> dict[str, Any]:
         "extension": row.ext,
         "franchise": row.franchise,
         "purity": row.purity or "unknown",
-        "content_rating": classification.rating,
-        "rating_confidence": classification.confidence,
-        "rating_basis": classification.basis,
-        "rating_reasons": list(classification.reasons),
+        "content_rating": row.content_rating,
+        "rating_confidence": row.rating_confidence,
+        "rating_basis": row.rating_basis,
+        "rating_reasons": list(row.rating_reasons),
         "size_bytes": row.size_bytes,
         "downloaded_at": row.download_recorded_at,
-        "sha256": row.sha256,
-        "tags": [
-            {
-                "name": tag.name,
-                "type": tag.type,
-                "provenance": tag.provenance,
-                "source": tag.source,
-            }
-            for tag in row.tags
-        ],
+        "sha256": digest.casefold() if _SHA256_RE.fullmatch(digest) else None,
+        "tag_count": row.tag_count,
+        "enrichment_status": row.enrichment_status,
+        "provider_coverage": {
+            "status": row.enrichment_status,
+            "authoritative_tag_count": row.tag_count,
+            "provenances": provenances,
+        },
+        "tags": tags,
+        "tag_suggestions": suggestions,
     }
 
 
@@ -90,7 +178,7 @@ def query_library_page(
     library_root: Path,
     filters: Mapping[str, object],
 ) -> dict[str, Any]:
-    """Return one validated, paginated page from the existing index."""
+    """Return one validated, paginated, path-safe index page."""
 
     rating = _clean_filter(filters.get("rating"))
     if rating is not None:
@@ -101,6 +189,14 @@ def query_library_page(
     sort = (_clean_filter(filters.get("sort")) or DEFAULT_SORT).casefold()
     if sort not in index.QUERY_SORTS:
         raise ValueError("sort must be one of: " + ", ".join(index.QUERY_SORTS))
+
+    shuffle_seed = _optional_bounded_int(
+        filters.get("shuffle_seed"),
+        minimum=MIN_SHUFFLE_SEED,
+        maximum=MAX_SHUFFLE_SEED,
+    )
+    if sort == "shuffle" and shuffle_seed is None:
+        raise ValueError("shuffle_seed is required when sort is shuffle")
 
     limit = _bounded_int(
         filters.get("limit"),
@@ -124,6 +220,7 @@ def query_library_page(
             tag=_clean_filter(filters.get("tag")),
             content_rating=rating,
             sort=sort,
+            shuffle_seed=shuffle_seed,
             limit=limit + 1,
             offset=offset,
         )
@@ -131,16 +228,13 @@ def query_library_page(
         conn.close()
 
     has_more = len(rows) > limit
-    rows = rows[:limit]
-    items = [_serialize_row(row, Path(library_root)) for row in rows]
-    missing_on_page = sum(not item["exists"] for item in items)
+    items = [_serialize_row(row, Path(library_root)) for row in rows[:limit]]
     return {
-        "schema_version": 1,
+        "schema_version": RESPONSE_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "index": {
-            "path": str(Path(db_path)),
             "mtime": datetime.fromtimestamp(
-                Path(db_path).stat().st_mtime, timezone.utc
+                _index_snapshot_mtime(Path(db_path)), timezone.utc
             ).isoformat(),
             "indexed_images": total_indexed,
         },
@@ -152,69 +246,152 @@ def query_library_page(
             "source": _clean_filter(filters.get("source")),
             "tag": _clean_filter(filters.get("tag")),
             "sort": sort,
+            "shuffle_seed": shuffle_seed,
         },
         "page": {
             "offset": offset,
             "limit": limit,
             "returned": len(items),
             "has_more": has_more,
-            "missing_paths": missing_on_page,
+            "missing_paths": sum(not item["exists"] for item in items),
         },
         "items": items,
     }
 
 
+def _facet_values(
+    facets: Mapping[str, Iterable[object]], *names: str
+) -> dict[str, int]:
+    for name in names:
+        values = facets.get(name)
+        if values is not None:
+            return {
+                str(getattr(item, "value") or "unknown"): int(getattr(item, "count"))
+                for item in values
+            }
+    return {}
+
+
 def library_facets(db_path: Path) -> dict[str, Any]:
-    """Return global facet counts for the indexed snapshot."""
+    """Return materialized facets plus constant-shape provider coverage."""
 
     conn = index.open_index_read_only(Path(db_path))
     try:
-        ratings = {
-            row["rating"]: row["count"]
-            for row in conn.execute(
-                "SELECT rating, COUNT(*) AS count FROM ("
-                "SELECT images.id, wallpaper_content_rating("
-                "images.purity, GROUP_CONCAT(tags.name, CHAR(31))) AS rating "
-                "FROM images "
-                "LEFT JOIN image_tags ON image_tags.image_id=images.id "
-                "LEFT JOIN tags ON tags.id=image_tags.tag_id "
-                "GROUP BY images.id"
-                ") GROUP BY rating"
-            )
-        }
-
-        def grouped(column: str) -> dict[str, int]:
-            allowed = {
-                "source", "orientation", "resolution_bucket",
-            }
-            if column not in allowed:
-                raise ValueError("unsupported facet column")
-            return {
-                (row["value"] or "unknown"): row["count"]
-                for row in conn.execute(
-                    f"SELECT {column} AS value, COUNT(*) AS count "
-                    f"FROM images GROUP BY {column} ORDER BY count DESC"
-                )
-            }
-
-        total = conn.execute("SELECT COUNT(*) FROM images").fetchone()[0]
-        return {
-            "schema_version": 1,
-            "indexed_images": total,
-            "ratings": {rating: ratings.get(rating, 0) for rating in CONTENT_RATINGS},
-            "sources": grouped("source"),
-            "orientations": grouped("orientation"),
-            "buckets": grouped("resolution_bucket"),
-        }
+        materialized = index.read_library_facets(conn)
+        coverage = index.provider_coverage(conn)
     finally:
         conn.close()
+
+    ratings = _facet_values(materialized, "rating", "content_rating")
+    ratings = {rating: ratings.get(rating, 0) for rating in CONTENT_RATINGS}
+    return {
+        "schema_version": RESPONSE_SCHEMA_VERSION,
+        "indexed_images": int(coverage["total_images"]),
+        "ratings": ratings,
+        "sources": _facet_values(materialized, "source"),
+        "orientations": _facet_values(materialized, "orientation"),
+        "buckets": _facet_values(materialized, "resolution_bucket", "bucket"),
+        "provider_coverage": coverage,
+    }
+
+
+def tag_autocomplete(db_path: Path, prefix: str, limit: int = 20) -> dict[str, Any]:
+    """Return counted authoritative-tag matches for WPD's tags endpoint."""
+
+    if not isinstance(prefix, str):
+        raise ValueError("prefix must be a string")
+    cleaned_prefix = prefix.strip()
+    if not 1 <= len(cleaned_prefix) <= MAX_AUTOCOMPLETE_PREFIX:
+        raise ValueError(
+            f"prefix length must be between 1 and {MAX_AUTOCOMPLETE_PREFIX}"
+        )
+    bounded_limit = _bounded_int(
+        limit, default=20, minimum=1, maximum=MAX_AUTOCOMPLETE_LIMIT
+    )
+    conn = index.open_index_read_only(Path(db_path))
+    try:
+        matches = index.counted_tag_autocomplete(
+            conn, cleaned_prefix, bounded_limit
+        )
+    finally:
+        conn.close()
+    return {
+        "schema_version": RESPONSE_SCHEMA_VERSION,
+        "prefix": cleaned_prefix,
+        "limit": bounded_limit,
+        "items": [
+            {
+                "name": item.name,
+                "type": item.type,
+                "provenance": item.provenance,
+                "source": item.source,
+                "image_count": item.image_count,
+            }
+            for item in matches
+        ],
+    }
+
+
+def review_tag_suggestion(
+    db_path: Path,
+    suggestion_id: int,
+    *,
+    review_status: object,
+    reviewer: object,
+    decision_note: object = None,
+) -> dict[str, Any]:
+    """Review one pending suggestion through a validated, non-migrating writer."""
+
+    parsed_id = _bounded_int(
+        suggestion_id, default=0, minimum=1, maximum=9_223_372_036_854_775_807
+    )
+    status = (
+        review_status.strip().casefold()
+        if isinstance(review_status, str)
+        else ""
+    )
+    if status not in {"accepted", "rejected"}:
+        raise ValueError("review_status must be accepted or rejected")
+    if not isinstance(reviewer, str):
+        raise ValueError("reviewer must be a string")
+    reviewer_name = reviewer.strip()
+    if not reviewer_name:
+        raise ValueError("reviewer is required")
+    if len(reviewer_name) > MAX_REVIEWER_LENGTH:
+        raise ValueError(f"reviewer must be at most {MAX_REVIEWER_LENGTH} characters")
+    if decision_note is not None and not isinstance(decision_note, str):
+        raise ValueError("decision_note must be a string or null")
+    note = None
+    if isinstance(decision_note, str):
+        note = decision_note.strip() or None
+    if note is not None and len(note) > MAX_DECISION_NOTE_LENGTH:
+        raise ValueError(
+            f"decision_note must be at most {MAX_DECISION_NOTE_LENGTH} characters"
+        )
+
+    conn = index.open_index_write(Path(db_path))
+    try:
+        with conn:
+            suggestion = index.review_tag_suggestion(
+                conn,
+                parsed_id,
+                review_status=status,
+                reviewer=reviewer_name,
+                decision_note=note,
+            )
+    finally:
+        conn.close()
+    return {
+        "schema_version": RESPONSE_SCHEMA_VERSION,
+        "suggestion": _serialize_suggestion(suggestion),
+    }
 
 
 def latest_verification_status(
     reports_root: Path,
     db_path: Path,
 ) -> dict[str, Any]:
-    """Describe whether the current DB file matches the last verified snapshot."""
+    """Describe whether the DB still matches the latest verification report."""
 
     candidates = sorted(
         Path(reports_root).glob("maintenance-*/verify.json"),
@@ -231,17 +408,17 @@ def latest_verification_status(
     report_path = candidates[0]
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError):
         return {
             "verified": False,
-            "reason": f"latest verification report is unreadable: {exc}",
-            "last_report": str(report_path),
+            "reason": "latest verification report is unreadable",
+            "last_report": report_path.name,
         }
 
     report_mtime = report_path.stat().st_mtime
-    db_mtime = Path(db_path).stat().st_mtime
+    snapshot_mtime = _index_snapshot_mtime(Path(db_path))
     report_ok = bool(report.get("ok"))
-    unchanged_since_report = db_mtime <= report_mtime
+    unchanged_since_report = snapshot_mtime <= report_mtime
     if not report_ok:
         reason = "last maintenance verification failed"
     elif not unchanged_since_report:
@@ -251,7 +428,7 @@ def latest_verification_status(
     return {
         "verified": report_ok and unchanged_since_report,
         "reason": reason,
-        "last_report": str(report_path),
+        "last_report": report_path.name,
         "last_verified_at": datetime.fromtimestamp(
             report_mtime, timezone.utc
         ).isoformat(),
