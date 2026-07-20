@@ -263,6 +263,16 @@ class GalleryBrowserContractTests(unittest.TestCase):
         self.assertIn("surface.inert = true", self.script)
         self.assertIn("document.body.style.overflow = 'hidden'", self.script)
 
+    def test_rating_tab_painting_and_handlers_exclude_dialog_rating_state(self) -> None:
+        scoped_selector = ".rating-tabs button[data-rating]"
+        self.assertEqual(
+            self.script.count(f"document.querySelectorAll('{scoped_selector}')"),
+            2,
+        )
+        self.assertNotIn("document.querySelectorAll('[data-rating]')", self.script)
+        self.assertIn(scoped_selector, _function_body(self.script, "paintRatingTabs"))
+        self.assertIn("detailDialog.dataset.rating", _function_body(self.script, "openDetail"))
+
     def test_density_fit_and_seed_are_bookmarkable_without_page_offsets(self) -> None:
         self.assertIn("['compact', 'comfortable', 'cinematic']", self.script)
         self.assertIn("['contain', 'crop']", self.script)

@@ -646,7 +646,7 @@
 
     function paintRatingTabs() {
       var total = facets ? Number(facets.indexed_images || 0) : 0;
-      document.querySelectorAll('[data-rating]').forEach(function (button) {
+      document.querySelectorAll('.rating-tabs button[data-rating]').forEach(function (button) {
         var key = button.dataset.rating;
         button.classList.toggle('active', key === state.rating);
         var count = key === 'all' ? total : Number((facets && facets.ratings[key]) || 0);
@@ -1633,7 +1633,7 @@
       observer.observe(sentinel);
     }
 
-    document.querySelectorAll('[data-rating]').forEach(function (button) {
+    document.querySelectorAll('.rating-tabs button[data-rating]').forEach(function (button) {
       button.addEventListener('click', function () {
         state.rating = allowed(button.dataset.rating, RATINGS, 'sfw');
         reconcilePreset();
