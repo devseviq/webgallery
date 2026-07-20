@@ -15,11 +15,21 @@ canonical wallpapers or their sidecars.
 - **Verified** — all campaign exit checks and current index verification passed.
 - **Deferred** — explicitly outside this campaign.
 
-The repository is currently **Implemented**. Static and synthetic integration
-checks pass, but this run did not start or restart a listener, create live
-thumbnails, migrate the live database, contact a provider, review a live
-suggestion, or run browser automation. No item is labelled Working or Verified
-from unit tests alone.
+The repository is currently **Implemented**. Static checks and a disposable
+synthetic HTTP integration smoke pass. That smoke used an isolated 64-image
+schema-3 fixture and alternate loopback listener: seeded shuffle returned 48
+plus 13 non-overlapping cards, counted autocomplete found 63 fixture `sky`
+associations across provider groups, sensitive runtime paths returned 404, and
+a fixture suggestion review left authoritative tags, tag count, and rating
+unchanged. One generated fixture thumbnail was 98 bytes versus 227 bytes for
+its explicitly requested tiny original; these synthetic sizes are not a live
+performance claim. The listener was stopped and the fixture was deleted.
+
+The in-app browser backend was unavailable, so visual, keyboard, focus, URL
+reload, and responsive checks were not run. This run also did not start or
+restart the live listener, create live thumbnails, migrate the live database,
+contact a provider, or review a live suggestion. No item is labelled Working
+or Verified from static or synthetic evidence alone.
 
 ## 1. Allowlisted gallery server
 
@@ -47,9 +57,10 @@ gate. Canonical images and SQLite evidence are not part of this rollback.
 
 **Status:** **Implemented**.
 
-**Remaining work:** perform the identity-gated alternate-listener HTTP smoke,
-then the deliberate live cutover. Do not infer a runtime root from this Git
-worktree.
+**Remaining work:** perform the identity-gated HTTP smoke against explicitly
+recorded live roots, then the deliberate live cutover. The synthetic alternate
+listener does not prove that operational boundary. Do not infer a runtime root
+from this Git worktree.
 
 ## 2. SHA-keyed cached thumbnails
 
@@ -144,9 +155,9 @@ changes files.
 
 **Status:** **Implemented**.
 
-**Remaining work:** run the browser smoke and visual/responsive inspection
-against an identity-gated alternate listener. No transfer should be sent as part
-of that smoke.
+**Remaining work:** run the browser smoke and visual/responsive inspection when
+a browser-control backend is available, then repeat against an identity-gated
+live-root listener. No transfer should be sent as part of either smoke.
 
 ## 5. Provider enrichment priority
 
