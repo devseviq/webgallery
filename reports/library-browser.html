@@ -401,7 +401,7 @@
   <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-title" aria-describedby="detail-status">
     <div class="detail-header">
       <button id="detail-prev" class="dialog-nav" type="button" aria-label="Previous loaded wallpaper">←</button>
-      <h2 id="detail-title">Wallpaper details</h2>
+      <h2 id="detail-title" tabindex="-1">Wallpaper details</h2>
       <button id="detail-next" class="dialog-nav" type="button" aria-label="Next loaded wallpaper">→</button>
       <button id="detail-close" type="button" aria-label="Close wallpaper details">Close</button>
     </div>
@@ -508,6 +508,7 @@
     var autocompleteItems = [];
     var autocompleteIndex = -1;
     var detailDialog = document.getElementById('detail-dialog');
+    var detailTitle = document.getElementById('detail-title');
     var detailImage = document.getElementById('detail-image');
     var detailOriginal = document.getElementById('detail-original');
     var detailStatus = document.getElementById('detail-status');
@@ -1400,7 +1401,7 @@
       detailItemId = item.id;
       if (opener) detailOpener = opener;
       detailDialog.dataset.rating = item.content_rating || 'unknown';
-      document.getElementById('detail-title').textContent = item.franchise || item.filename;
+      detailTitle.textContent = item.franchise || item.filename;
       document.getElementById('detail-rating-badge').textContent =
         (item.content_rating || 'unknown') + ' · ' + (item.rating_basis || 'unknown basis');
       renderDetailFacts(item);
@@ -1441,7 +1442,7 @@
             surface.setAttribute('aria-hidden', 'true');
           });
         }
-        document.getElementById('detail-close').focus();
+        detailTitle.focus();
       }
       if (item.original_url) {
         detailOriginal.href = item.original_url;

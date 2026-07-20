@@ -46,7 +46,7 @@ root or `SimpleHTTPRequestHandler` fallback. `reports/_build_dashboard.py`,
 sanitized status and allowlisted media contracts. `tests/test_dashboard_server.py`
 probes allowed, denied, traversal, method, origin, and path-free payload cases.
 
-**Verification:** `python -m pytest -q tests/test_dashboard_server.py`, then—only
+**Verification:** `.venv\Scripts\python.exe -m pytest -q tests/test_dashboard_server.py`, then—only
 after verified SND-HOST identity—start an alternate loopback listener and probe
 the allowlist plus known denied queue/config/database paths without reading
 sensitive response bodies.
@@ -77,7 +77,7 @@ The server exposes only `/thumb/<sha256>.webp` and `/original/<image-id>`.
 `thumbnail_url`; it requests `original_url` only after the user opens the detail
 dialog, and keeps the explicit Open original action inside that dialog.
 
-**Verification:** `python -m pytest -q tests/test_gallery_thumbnails.py
+**Verification:** `.venv\Scripts\python.exe -m pytest -q tests/test_gallery_thumbnails.py
 tests/test_dashboard_server.py tests/test_gallery_browser_contract.py`. After
 the identity gate, measure the summed response bytes for one cold and warm
 48-card thumbnail page separately from one explicitly opened original.
@@ -106,9 +106,9 @@ autocomplete, provider coverage, path-free thumbnail/original identities, and a
 separate suggestion collection. Migration, query-shape, WAL freshness, API, and
 rating boundaries are covered by index/browser/content-rating tests.
 
-**Verification:** `python -m pytest -q tests/test_index_library.py
+**Verification:** `.venv\Scripts\python.exe -m pytest -q tests/test_index_library.py
 tests/test_library_browser.py tests/test_content_rating.py`, followed by
-`python -m dl_engine.index_library --verify-json --library-root <explicit-root>
+`.venv\Scripts\python.exe -m dl_engine.index_library --verify-json --library-root <explicit-root>
 --db-path <explicit-db>` against the current live snapshot after the identity
 gate for any migration or rebuild. Record warm API timings separately from the
 older roughly two-second discovery measurements.
@@ -120,10 +120,46 @@ evidence.
 
 **Status:** **Implemented**.
 
-**Remaining work:** migrate or rebuild a copy, prove parity, then run the
-identity-gated live publication and current verification. Deep keyset
-pagination remains a measured follow-up; this campaign retains bounded offset
-pagination.
+**Remaining work:** publish and verify a separately owned schema-3 gallery
+database. Do **not** migrate `F:\Wallpapers\wallpaper_library.sqlite` in place:
+the sibling `F:\Wallpapers\dl-engine` maintenance task owns that schema-2 file
+and can write its version markers back to 2. The current side-by-side target is
+`F:\Wallpapers\webgallery_library.sqlite`; its refresh and rollback ownership
+must remain explicit. Deep keyset pagination remains a measured follow-up;
+this campaign retains bounded offset pagination.
+
+**Aggregate copy-migration check (2026-07-20, verified SND-HOST identity,
+read-only on the live database and library):** a disposable
+`sqlite3.Connection.backup()` copy of the live
+`F:\Wallpapers\wallpaper_library.sqlite` (schema 2, 85,509 images,
+29,716 tags, 466,715 `image_tags` rows) was migrated in-process to schema 3 via
+this module's own `connect()`. Pre/post aggregate counts matched for `images`,
+`tags`, `image_tags`, source/orientation distributions, and null SHA values;
+sampled paths also matched. `content_rating` differs from `purity` only because
+it is a newly materialized derivation, not a copy.
+`--verify-json` against the migrated copy and the real `F:\Wallpapers\library`
+returned `"ok": true, "status": "ok"`, zero issues, 85,509 disk images against
+85,509 indexed images, zero missing/unindexed/mismatched paths, zero duplicate
+SHA groups, zero schema/facet/suggestion failures. The live `.sqlite` file was
+only ever opened `mode=ro`; all writes landed in a session scratch copy, which
+was not published anywhere. This provides strong migration evidence on a copy;
+it does not migrate, publish, or verify the live database itself, and no live
+cutover occurred. The retained aggregate counts, sampled-path comparisons, and
+complete verifier result are not a row-by-row diff artifact, so this is not
+described as a full parity proof.
+
+This run also surfaced and fixed a documentation hazard: see the
+module-resolution warning added to `docs/INDEX_LIBRARY.md`. This worktree's
+own `.venv` correctly resolves `dl_engine` via its editable install; the
+*global* interpreter instead resolves `dl_engine` to a separate, actively
+developed sibling project at `F:\Wallpapers\dl-engine` (this gallery's
+`dl_engine` package was originally derived from it) that shares the same
+top-level import name and maintains the live database's current schema 2. The
+first verification attempt in this session used the global interpreter by
+mistake and got a false `schema-version-mismatch` failure from that sibling
+project's code before this was diagnosed and corrected to use this worktree's
+own `.venv`. That sibling also owns the live schema-2 database, which is why
+gallery publication must use the separate schema-3 path above.
 
 ## 4. Gallery discovery and presentation controls
 
@@ -142,9 +178,10 @@ parses the source contract and runs `node --check` when Node is available.
 Deterministic CSS Grid reading order is retained; masonry is deferred because
 it would complicate keyboard and incremental-append order.
 
-**Verification:** `python -m pytest -q tests/test_gallery_browser_contract.py
+**Verification:** `.venv\Scripts\python.exe -m pytest -q tests/test_gallery_browser_contract.py
 tests/test_library_browser.py tests/test_dashboard_server.py
-tests/test_gallery_thumbnails.py`, then the full `python -m pytest -q`. A live
+tests/test_gallery_thumbnails.py`, then the full
+`.venv\Scripts\python.exe -m pytest -q`. A live
 browser smoke should cover autocomplete keys, each preset and reload, two
 shuffle pages with one seed, dialog focus/arrows/Escape, density/fit, NSFW
 blur/reveal, selection, and a non-sending transfer-status path.
@@ -210,7 +247,7 @@ section and submits same-origin JSON decisions; it never adds them to provider
 chips, autocomplete, tag counts, franchises, ratings, or facets. Accepted
 suggestions remain suggestions.
 
-**Verification:** `python -m pytest -q tests/test_index_library.py
+**Verification:** `.venv\Scripts\python.exe -m pytest -q tests/test_index_library.py
 tests/test_library_browser.py tests/test_gallery_browser_contract.py`. A live
 review smoke requires verified SND-HOST identity because it writes SQLite;
 confirm afterward that authoritative tags, tag count, materialized rating, and

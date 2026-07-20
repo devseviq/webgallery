@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any, Iterable, Mapping
@@ -63,6 +64,20 @@ def _index_snapshot_mtime(db_path: Path) -> float:
         return max(snapshot_mtime, Path(str(database) + "-wal").stat().st_mtime)
     except FileNotFoundError:
         return snapshot_mtime
+
+
+def _canonical_path_key(value: object) -> str | None:
+    """Return an OS-aware comparison key for a configured or reported path."""
+
+    if not isinstance(value, (str, os.PathLike)):
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        resolved = Path(value).resolve(strict=False)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    return os.path.normcase(os.path.normpath(str(resolved)))
 
 
 def _canonical_file_exists(row: index.ImageRow, library_root: Path) -> bool:
@@ -390,32 +405,60 @@ def review_tag_suggestion(
 def latest_verification_status(
     reports_root: Path,
     db_path: Path,
+    library_root: Path,
 ) -> dict[str, Any]:
-    """Describe whether the DB still matches the latest verification report."""
+    """Describe whether the configured library matches its latest report."""
 
-    candidates = sorted(
-        Path(reports_root).glob("maintenance-*/verify.json"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    if not candidates:
+    candidate_paths = list(Path(reports_root).glob("maintenance-*/verify.json"))
+    if not candidate_paths:
         return {
             "verified": False,
             "reason": "no maintenance verification report found",
             "last_report": None,
         }
 
-    report_path = candidates[0]
-    try:
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    candidates: list[tuple[float, Path]] = []
+    for candidate_path in candidate_paths:
+        try:
+            candidates.append((candidate_path.stat().st_mtime, candidate_path))
+        except OSError:
+            continue
+    candidates.sort(key=lambda candidate: candidate[0], reverse=True)
+
+    configured_database = _canonical_path_key(db_path)
+    configured_library = _canonical_path_key(library_root)
+    selected: tuple[Path, dict[str, Any], float] | None = None
+    for report_mtime, report_path in candidates:
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(report, dict):
+            continue
+        reported_database = _canonical_path_key(report.get("db_path"))
+        reported_library = _canonical_path_key(report.get("library_root"))
+        if (
+            reported_database is not None
+            and configured_database is not None
+            and reported_database == configured_database
+            and reported_library is not None
+            and configured_library is not None
+            and reported_library == configured_library
+        ):
+            selected = (report_path, report, report_mtime)
+            break
+
+    if selected is None:
         return {
             "verified": False,
-            "reason": "latest verification report is unreadable",
-            "last_report": report_path.name,
+            "reason": (
+                "no maintenance verification report matches the configured "
+                "database and library root"
+            ),
+            "last_report": None,
         }
 
-    report_mtime = report_path.stat().st_mtime
+    report_path, report, report_mtime = selected
     snapshot_mtime = _index_snapshot_mtime(Path(db_path))
     report_ok = bool(report.get("ok"))
     unchanged_since_report = snapshot_mtime <= report_mtime

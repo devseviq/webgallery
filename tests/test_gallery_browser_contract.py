@@ -219,6 +219,9 @@ class GalleryBrowserContractTests(unittest.TestCase):
         self.assertEqual(tag, "dialog")
         self.assertEqual(attrs.get("aria-labelledby"), "detail-title")
         self.assertEqual(attrs.get("aria-describedby"), "detail-status")
+        title_tag, title_attrs = self.element("detail-title")
+        self.assertEqual(title_tag, "h2")
+        self.assertEqual(title_attrs.get("tabindex"), "-1")
         _, close_attrs = self.element("detail-close")
         self.assertIn("Close", close_attrs.get("aria-label") or "")
         _, original_attrs = self.element("detail-original")
@@ -233,6 +236,11 @@ class GalleryBrowserContractTests(unittest.TestCase):
         self.assertIn("event.key === 'ArrowLeft'", self.script)
         self.assertIn("event.key === 'ArrowRight'", self.script)
         self.assertIn("isInteractiveTarget(event.target)", self.script)
+        open_body = _function_body(self.script, "openDetail")
+        self.assertIn("detailTitle.focus()", open_body)
+        self.assertNotIn("detail-close').focus()", open_body)
+        interactive_body = _function_body(self.script, "isInteractiveTarget")
+        self.assertIn("button, a, input, textarea, select", interactive_body)
         self.assertIn("trapFallbackFocus(event)", self.script)
         self.assertIn(
             "dialog.detail-dialog:not([open]):not(.fallback-open)", self.html

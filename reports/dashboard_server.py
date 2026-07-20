@@ -807,6 +807,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             payload["verification"] = library_browser.latest_verification_status(
                 self.server.config.report_output_root,
                 self.server.config.database_path,
+                self.server.config.library_root,
             )
             public = _sanitize_library_payload(payload)
         except ValueError as exc:
@@ -911,6 +912,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 status = library_browser.latest_verification_status(
                     self.server.config.report_output_root,
                     self.server.config.database_path,
+                    self.server.config.library_root,
                 )
                 status["facets"] = self._library_facets()
             except (FileNotFoundError, OSError, sqlite3.Error, ValueError):

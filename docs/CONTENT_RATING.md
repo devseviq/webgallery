@@ -41,13 +41,13 @@ documented in `reports/README_live_dashboard.md`. The application deliberately
 does not infer live roots from a Git worktree. To inspect its arguments:
 
 ```powershell
-python .\reports\dashboard_server.py --help
+.\.venv\Scripts\python.exe .\reports\dashboard_server.py --help
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:8090/library
+http://127.0.0.1:8091/library
 ```
 
 The browser starts in the SFW collection. NSFW is a separate tab and its
@@ -63,23 +63,25 @@ The API supplies the materialized rating explanation and keeps visual
 suggestions in a separate collection for a clearly labelled review section.
 
 The page displays whether the current SQLite file still matches the most recent
-successful maintenance verification. It may expose a clearly labelled working
-snapshot while downloads are active, but it never claims that snapshot is
-verified.
+verification report for that exact database and library root. It may expose a
+clearly labelled working snapshot while downloads are active, but it never
+claims that snapshot is verified.
 
 ## CLI queries
 
 Content rating can be combined with existing index filters:
 
 ```powershell
-Set-Location F:\Wallpapers\dl-engine
-python -m dl_engine.index_library --query "rating=nsfw limit=100"
-python -m dl_engine.index_library --query "rating=suggestive orientation=portrait limit=100"
-python -m dl_engine.index_library --query "rating=unknown source=zerochan limit=100 offset=100"
-python -m dl_engine.index_library --query "rating=sfw bucket=4K source=wallhaven sort=resolution_desc"
-python -m dl_engine.index_library --query "rating=unknown sort=rating_confidence limit=100"
-python -m dl_engine.index_library --query "sort=least_tagged limit=100"
-python -m dl_engine.index_library --query "sort=shuffle shuffle_seed=20260720 limit=100"
+Set-Location F:\Wallpapers\webgallery
+$python = (Resolve-Path .\.venv\Scripts\python.exe).Path
+$galleryDb = 'F:\Wallpapers\webgallery_library.sqlite'
+& $python -m dl_engine.index_library --db-path $galleryDb --query "rating=nsfw limit=100"
+& $python -m dl_engine.index_library --db-path $galleryDb --query "rating=suggestive orientation=portrait limit=100"
+& $python -m dl_engine.index_library --db-path $galleryDb --query "rating=unknown source=zerochan limit=100 offset=100"
+& $python -m dl_engine.index_library --db-path $galleryDb --query "rating=sfw bucket=4K source=wallhaven sort=resolution_desc"
+& $python -m dl_engine.index_library --db-path $galleryDb --query "rating=unknown sort=rating_confidence limit=100"
+& $python -m dl_engine.index_library --db-path $galleryDb --query "sort=least_tagged limit=100"
+& $python -m dl_engine.index_library --db-path $galleryDb --query "sort=shuffle shuffle_seed=20260720 limit=100"
 ```
 
 Supported rating values are `sfw`, `suggestive`, `nsfw`, and `unknown`.
@@ -116,7 +118,7 @@ suggestion layer and does not trigger a rating refresh.
 ## Verification
 
 ```powershell
-python -m pytest -q tests/test_index_library.py tests/test_library_browser.py tests/test_content_rating.py
+.\.venv\Scripts\python.exe -m pytest -q tests/test_index_library.py tests/test_library_browser.py tests/test_content_rating.py
 ```
 
 The content split is a derived navigation view. Canonical images, authoritative

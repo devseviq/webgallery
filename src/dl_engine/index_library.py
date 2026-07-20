@@ -777,8 +777,16 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         "ON images(tag_count, download_recorded_at DESC, id DESC)",
         "CREATE INDEX IF NOT EXISTS idx_images_download_recorded_at "
         "ON images(download_recorded_at DESC, id DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_images_newest "
+        "ON images((julianday(download_recorded_at) IS NULL), "
+        "julianday(download_recorded_at) DESC, id DESC)",
         "CREATE INDEX IF NOT EXISTS idx_images_size_bytes "
         "ON images(size_bytes DESC, id)",
+        "CREATE INDEX IF NOT EXISTS idx_images_size_desc "
+        "ON images((size_bytes IS NULL), size_bytes DESC, "
+        "path COLLATE NOCASE, path, id)",
+        "CREATE INDEX IF NOT EXISTS idx_images_sha256_lower "
+        "ON images(lower(sha256))",
         "CREATE INDEX IF NOT EXISTS idx_images_franchise "
         "ON images(franchise COLLATE NOCASE, id)",
         "CREATE INDEX IF NOT EXISTS idx_images_rating_confidence "
@@ -1420,7 +1428,12 @@ def upsert_tag_suggestion(
     model_version: str,
     provenance: str,
 ) -> TagSuggestion:
-    """Insert/update review-only evidence without changing authoritative tags."""
+    """Insert/update pending evidence without changing reviewed suggestions.
+
+    A matching pending row is refreshed in place. Once accepted or rejected,
+    the complete suggestion and its decision metadata are immutable; later
+    generator reruns are idempotent no-ops that return the reviewed row.
+    """
     ids = _validated_image_ids((image_id,))
     if conn.execute("SELECT 1 FROM images WHERE id=?", ids).fetchone() is None:
         raise ValueError(f"unknown image id: {image_id}")
@@ -1442,7 +1455,8 @@ def upsert_tag_suggestion(
         "provenance,review_status,created_at) VALUES (?,?,?,?,?,?,?,'pending',?) "
         "ON CONFLICT(image_id, normalized_label, generator, model_version) "
         "DO UPDATE SET label=excluded.label, confidence=excluded.confidence, "
-        "provenance=excluded.provenance",
+        "provenance=excluded.provenance "
+        "WHERE tag_suggestions.review_status='pending'",
         (
             image_id, label, normalized, confidence, generator, model_version,
             provenance, _now_iso(),

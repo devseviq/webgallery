@@ -112,22 +112,32 @@ Run the identity verifier before a live start/restart or any live cache,
 database, queue, or provider-ledger mutation:
 
 ```powershell
-& 'C:\Users\Dev\OneDrive\common\common_dev\Get-VerifiedMachineIdentity.ps1'
+$identity = & 'C:\Users\Dev\OneDrive\common\common_dev\Get-VerifiedMachineIdentity.ps1'
+if ($identity.status -ne 'VERIFIED' -or $identity.machineId -ne 'snd-host') {
+    throw 'Refusing live gallery start: SND-HOST identity is not verified.'
+}
 ```
 
 Require `VERIFIED`, machine ID `snd-host`, computer `SND-HOST`, and account
 `SND-HOST\Dev`. Then launch the in-repository source with every runtime root
 named explicitly:
 
+`F:\Wallpapers\wallpaper_library.sqlite` is not the gallery database. It is a
+schema-2 index owned by the sibling `F:\Wallpapers\dl-engine` scheduled
+maintenance path. The allowlisted gallery must use the separately owned
+schema-3 `F:\Wallpapers\webgallery_library.sqlite`; see
+`docs/INDEX_LIBRARY.md` for its rebuild and verification gate.
+
 ```powershell
 $repo = 'F:\Wallpapers\webgallery'
 $live = 'F:\Wallpapers'
+$python = "$repo\.venv\Scripts\python.exe"
 
-python "$repo\reports\dashboard_server.py" `
+& $python "$repo\reports\dashboard_server.py" `
   --app-reports-root "$repo\reports" `
   --collection-root $live `
   --library-root "$live\library" `
-  --database-path "$live\wallpaper_library.sqlite" `
+  --database-path "$live\webgallery_library.sqlite" `
   --queue-state-path "$live\.wallpaper-download-queue\state.json" `
   --report-output-root "$live\reports" `
   --thumbnail-cache-root "$live\.gallery-thumbnail-cache" `
@@ -136,13 +146,15 @@ python "$repo\reports\dashboard_server.py" `
   --transfer-config-path "$live\.wallpaper-transfer-targets.json" `
   --environment-path "$live\.env" `
   --host 127.0.0.1 `
-  --port 8090
+  --port 8091
 ```
 
 The server uses a reusable `ThreadingHTTPServer` with daemon request threads so
 one image or thumbnail response does not serialize unrelated API requests.
-Stop it with Ctrl+C in its owning console. Do not run a second live listener on
-the same port.
+Port 8091 is the alternate-listener smoke target and does not replace the
+existing listener. Stop it with Ctrl+C in its owning console. A deliberate
+cutover to port 8090 requires stopping the old listener first; never run two
+listeners on the same port.
 
 ## Snapshot generation and watcher
 
@@ -154,8 +166,9 @@ For a standalone rebuild, run:
 $repo = 'F:\Wallpapers\webgallery'
 $live = 'F:\Wallpapers'
 $out = "$live\reports"
+$python = "$repo\.venv\Scripts\python.exe"
 
-python "$repo\reports\_build_dashboard.py" `
+& $python "$repo\reports\_build_dashboard.py" `
   --collection-root $live `
   --queue-state-path "$live\.wallpaper-download-queue\state.json" `
   --library-root "$live\library" `
@@ -163,7 +176,7 @@ python "$repo\reports\_build_dashboard.py" `
   --report-output-root $out `
   --pause-flag-path "$live\.wallpaper-download-queue\pause.flag"
 
-python "$repo\reports\_render_dashboard.py" `
+& $python "$repo\reports\_render_dashboard.py" `
   --snapshot-path "$out\_snapshot.json" `
   --output-path "$out\download-queue-dashboard.html"
 ```
@@ -200,6 +213,7 @@ publishing the new PID; stale PID files are removed safely.
    is stopped.
 4. Restart the prior listener only after the identity gate and bounded probes.
 
-This slice does not migrate the database or alter canonical media. As of the
-source change, live cutover, live cache generation, listener restart, and live
-HTTP verification remain deferred because they were not authorized or run.
+The server does not migrate its configured database or alter canonical media.
+Live cutover, live cache generation, listener restart, and live HTTP
+verification remain gated until the separate schema-3 gallery database has
+been published and verified.

@@ -416,6 +416,33 @@ class DashboardServerTests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
 
+    def test_library_verification_uses_configured_database_and_root(self) -> None:
+        verification_payload = {
+            "verified": False,
+            "reason": "fixture",
+            "last_report": None,
+        }
+        with mock.patch.object(
+            dashboard_server.library_browser,
+            "latest_verification_status",
+            return_value=verification_payload,
+        ) as verification:
+            library_status, _headers, _payload = self.json_request(
+                "GET", "/api/library?limit=1"
+            )
+            status_status, _headers, _payload = self.json_request(
+                "GET", "/api/library/status"
+            )
+
+        self.assertEqual(library_status, 200)
+        self.assertEqual(status_status, 200)
+        expected = mock.call(
+            self.output_reports.absolute(),
+            self.db.absolute(),
+            self.library.absolute(),
+        )
+        self.assertEqual(verification.call_args_list, [expected, expected])
+
     def test_library_facet_cache_detects_wal_only_commits(self) -> None:
         main_before = self.db.stat()
         with mock.patch.object(

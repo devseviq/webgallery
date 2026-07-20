@@ -34,7 +34,8 @@ the local wallpaper gallery. It does not own the wallpaper collection.
 
 ## Python and web style
 
-- Require Python 3.10+ and use \`pathlib.Path\`.
+- Require Python 3.10+ and use \`pathlib.Path\`. The current SND-HOST project
+  venv uses standard CPython 3.14; free-threaded builds require a separate gate.
 - Type-hint public functions and keep filesystem containment checks fail-closed.
 - Prefer standard-library browser/server code; Pillow is the thumbnail
   dependency.
@@ -45,7 +46,7 @@ the local wallpaper gallery. It does not own the wallpaper collection.
 
 ## Verification
 
-- Compile: \`python -m compileall -q src reports tests\`
-- Tests: \`python -m pytest -q\`
+- Compile: \`.venv\Scripts\python.exe -m compileall -q src reports tests\`
+- Tests: \`.venv\Scripts\python.exe -m pytest -q\`
 - Run live probes only against an alternate loopback listener after identity
   verification.

@@ -2028,6 +2028,60 @@ class SchemaV3ContractTests(unittest.TestCase):
 
 
 class DiscoveryQueryContractTests(unittest.TestCase):
+    def test_indexed_plans_cover_newest_size_desc_and_sha_lookup(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = idx.connect(Path(tmp) / "index.sqlite")
+            for number in range(1, 6):
+                image_id = _insert_minimal_image(conn, number)
+                conn.execute(
+                    "UPDATE images SET size_bytes=?, sha256=? WHERE id=?",
+                    (number * 100, f"{number:064x}", image_id),
+                )
+
+            def plan(sql: str, params: tuple[object, ...] = ()) -> list[str]:
+                return [
+                    str(row["detail"])
+                    for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params)
+                ]
+
+            for sort, index_name in (
+                ("newest", "idx_images_newest"),
+                ("size_desc", "idx_images_size_desc"),
+            ):
+                with self.subTest(sort=sort):
+                    details = plan(
+                        "SELECT images.* FROM images ORDER BY "
+                        + idx._QUERY_ORDER_BY[sort]
+                        + " LIMIT ? OFFSET ?",
+                        (10, 0),
+                    )
+                    self.assertTrue(
+                        any(f"USING INDEX {index_name}" in detail for detail in details),
+                        details,
+                    )
+                    self.assertFalse(
+                        any("USE TEMP B-TREE FOR ORDER BY" in detail for detail in details),
+                        details,
+                    )
+
+            sha_details = plan(
+                "SELECT path, ext FROM images WHERE lower(sha256) = ? LIMIT 2",
+                (f"{1:064x}",),
+            )
+            self.assertTrue(
+                any(
+                    "SEARCH images USING INDEX idx_images_sha256_lower" in detail
+                    for detail in sha_details
+                ),
+                sha_details,
+            )
+            self.assertFalse(
+                any(detail == "SCAN images" for detail in sha_details), sha_details,
+            )
+            conn.close()
+
     def test_constant_shape_hydration_sorts_shuffle_and_literal_autocomplete(self) -> None:
         import tempfile
 
@@ -2089,6 +2143,47 @@ class DiscoveryQueryContractTests(unittest.TestCase):
 
 
 class SuggestionBoundaryTests(unittest.TestCase):
+    def test_reviewed_suggestions_are_immutable_to_later_upserts(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = idx.connect(Path(tmp) / "index.sqlite")
+            image_id = _insert_minimal_image(conn, 1)
+            for number, review_status in enumerate(("accepted", "rejected"), 1):
+                with self.subTest(review_status=review_status):
+                    pending = idx.upsert_tag_suggestion(
+                        conn, image_id=image_id, label=f"Visual Label {number}",
+                        confidence=0.6, generator="visual-test",
+                        model_version=f"v{number}", provenance="first-run",
+                    )
+                    reviewed = idx.review_tag_suggestion(
+                        conn, pending.id, review_status=review_status,
+                        reviewer="tester", decision_note="human decision",
+                    )
+                    rerun = idx.upsert_tag_suggestion(
+                        conn, image_id=image_id, label=f"VISUAL LABEL {number}",
+                        confidence=0.99, generator="visual-test",
+                        model_version=f"v{number}", provenance="later-run",
+                    )
+                    self.assertEqual(rerun, reviewed)
+
+            pending = idx.upsert_tag_suggestion(
+                conn, image_id=image_id, label="Refreshable", confidence=0.5,
+                generator="visual-test", model_version="pending",
+                provenance="first-run",
+            )
+            refreshed = idx.upsert_tag_suggestion(
+                conn, image_id=image_id, label="REFRESHABLE", confidence=0.75,
+                generator="visual-test", model_version="pending",
+                provenance="later-run",
+            )
+            self.assertEqual(refreshed.id, pending.id)
+            self.assertEqual(refreshed.review_status, "pending")
+            self.assertEqual(refreshed.label, "REFRESHABLE")
+            self.assertEqual(refreshed.confidence, 0.75)
+            self.assertEqual(refreshed.provenance, "later-run")
+            conn.close()
+
     def test_suggestions_never_become_tags_ratings_or_autocomplete(self) -> None:
         import tempfile
 
@@ -2112,7 +2207,7 @@ class SuggestionBoundaryTests(unittest.TestCase):
             idx.refresh_derived_metadata(conn)
             row = idx.query(conn)[0]
             self.assertEqual(accepted.review_status, "accepted")
-            self.assertEqual(preserved.review_status, "accepted")
+            self.assertEqual(preserved, accepted)
             self.assertEqual(row.content_rating.rating, "unknown")
             self.assertEqual(row.tag_count, 0)
             self.assertEqual(row.tags, ())

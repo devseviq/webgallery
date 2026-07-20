@@ -534,13 +534,23 @@ class LibraryBrowserTests(unittest.TestCase):
         verify_dir.mkdir(parents=True)
         verify = verify_dir / "verify.json"
         verify.write_text(
-            json.dumps({"ok": True, "status": "ok", "counts": {"indexed_images": 5}}),
+            json.dumps(
+                {
+                    "ok": True,
+                    "status": "ok",
+                    "db_path": str(self.db),
+                    "library_root": str(self.library),
+                    "counts": {"indexed_images": 5},
+                }
+            ),
             encoding="utf-8",
         )
         now = time.time()
         os.utime(self.db, (now - 10, now - 10))
         os.utime(verify, (now, now))
-        current = library_browser.latest_verification_status(reports, self.db)
+        current = library_browser.latest_verification_status(
+            reports, self.db, self.library
+        )
         self.assertTrue(current["verified"])
         self.assertEqual(current["last_report"], "verify.json")
         self.assert_path_free(current)
@@ -548,15 +558,147 @@ class LibraryBrowserTests(unittest.TestCase):
         wal = Path(str(self.db) + "-wal")
         wal.write_bytes(b"synthetic WAL freshness marker")
         os.utime(wal, (now + 5, now + 5))
-        wal_changed = library_browser.latest_verification_status(reports, self.db)
+        wal_changed = library_browser.latest_verification_status(
+            reports, self.db, self.library
+        )
         self.assertFalse(wal_changed["verified"])
         self.assertIn("changed after", wal_changed["reason"])
         wal.unlink()
 
         os.utime(self.db, (now + 10, now + 10))
-        changed = library_browser.latest_verification_status(reports, self.db)
+        changed = library_browser.latest_verification_status(
+            reports, self.db, self.library
+        )
         self.assertFalse(changed["verified"])
         self.assertIn("changed after", changed["reason"])
+
+    def test_verification_status_rejects_report_for_different_database(self) -> None:
+        reports = self.root / "reports"
+        verify_dir = reports / "maintenance-20260719T000000Z-test"
+        verify_dir.mkdir(parents=True)
+        verify = verify_dir / "verify.json"
+        verify.write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "status": "ok",
+                    "db_path": str(self.root / "different.sqlite"),
+                    "library_root": str(self.library),
+                }
+            ),
+            encoding="utf-8",
+        )
+        now = time.time()
+        os.utime(self.db, (now - 10, now - 10))
+        os.utime(verify, (now, now))
+
+        status = library_browser.latest_verification_status(
+            reports, self.db, self.library
+        )
+
+        self.assertFalse(status["verified"])
+        self.assertIn("no maintenance verification report matches", status["reason"])
+        self.assertIsNone(status["last_report"])
+
+    def test_verification_status_rejects_report_for_different_library(self) -> None:
+        reports = self.root / "reports"
+        verify_dir = reports / "maintenance-20260719T000000Z-test"
+        verify_dir.mkdir(parents=True)
+        verify = verify_dir / "verify.json"
+        verify.write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "status": "ok",
+                    "db_path": str(self.db),
+                    "library_root": str(self.root / "different-library"),
+                }
+            ),
+            encoding="utf-8",
+        )
+        now = time.time()
+        os.utime(self.db, (now - 10, now - 10))
+        os.utime(verify, (now, now))
+
+        status = library_browser.latest_verification_status(
+            reports, self.db, self.library
+        )
+
+        self.assertFalse(status["verified"])
+        self.assertIn("no maintenance verification report matches", status["reason"])
+        self.assertIsNone(status["last_report"])
+
+    def test_verification_status_rejects_report_with_missing_identity(self) -> None:
+        reports = self.root / "reports"
+        verify_dir = reports / "maintenance-20260719T000000Z-test"
+        verify_dir.mkdir(parents=True)
+        verify = verify_dir / "verify.json"
+        verify.write_text(
+            json.dumps({"ok": True, "status": "ok"}),
+            encoding="utf-8",
+        )
+        now = time.time()
+        os.utime(self.db, (now - 10, now - 10))
+        os.utime(verify, (now, now))
+
+        status = library_browser.latest_verification_status(
+            reports, self.db, self.library
+        )
+
+        self.assertFalse(status["verified"])
+        self.assertIn("no maintenance verification report matches", status["reason"])
+        self.assertIsNone(status["last_report"])
+
+    def test_verification_status_uses_older_matching_report(self) -> None:
+        reports = self.root / "reports"
+        matching_dir = reports / "maintenance-20260719T000000Z-gallery"
+        unrelated_dir = reports / "maintenance-20260719T010000Z-other"
+        malformed_dir = reports / "maintenance-20260719T020000Z-malformed"
+        for directory in (matching_dir, unrelated_dir, malformed_dir):
+            directory.mkdir(parents=True)
+
+        matching = matching_dir / "verify.json"
+        matching.write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "status": "ok",
+                    "db_path": str(self.db),
+                    "library_root": str(self.library),
+                    "counts": {"indexed_images": 5},
+                }
+            ),
+            encoding="utf-8",
+        )
+        unrelated = unrelated_dir / "verify.json"
+        unrelated.write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "status": "ok",
+                    "db_path": str(self.root / "other.sqlite"),
+                    "library_root": str(self.root / "other-library"),
+                    "counts": {"indexed_images": 999},
+                }
+            ),
+            encoding="utf-8",
+        )
+        malformed = malformed_dir / "verify.json"
+        malformed.write_text("{not valid JSON", encoding="utf-8")
+
+        now = time.time()
+        os.utime(self.db, (now - 30, now - 30))
+        os.utime(matching, (now - 20, now - 20))
+        os.utime(unrelated, (now - 10, now - 10))
+        os.utime(malformed, (now, now))
+
+        status = library_browser.latest_verification_status(
+            reports, self.db, self.library
+        )
+
+        self.assertTrue(status["verified"])
+        self.assertEqual(status["last_counts"], {"indexed_images": 5})
+        self.assertIn("still matches", status["reason"])
 
 
 if __name__ == "__main__":

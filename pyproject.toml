@@ -9,12 +9,12 @@ description = "A secure, thumbnail-first local wallpaper gallery."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "Pillow>=10",
+    "Pillow>=12",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8",
+    "pytest>=8.4.2",
 ]
 
 [project.scripts]
