@@ -91,6 +91,40 @@ class GalleryThumbnailTests(unittest.TestCase):
             self.assertEqual(thumb.size, (320, 640))
             self.assertNotIn("exif", thumb.info)
 
+    def test_pillow_decoded_mpo_source_generates_bounded_webp(self) -> None:
+        exif = Image.Exif()
+        exif[270] = "synthetic MPO metadata"
+        source = self.image("synthetic-mpo.jpg", (80, 40), exif=exif)
+        original_open = Image.open
+        source_loaded = False
+
+        def open_as_mpo(*args: object, **kwargs: object) -> Image.Image:
+            nonlocal source_loaded
+            opened = original_open(*args, **kwargs)
+            opened.format = "MPO"
+            original_load = opened.load
+
+            def tracked_load() -> object:
+                nonlocal source_loaded
+                source_loaded = True
+                return original_load()
+
+            opened.load = tracked_load
+            return opened
+
+        with mock.patch.object(
+            gallery_thumbnails.Image,
+            "open",
+            side_effect=open_as_mpo,
+        ):
+            result = ensure_thumbnail(source, self.cache, "e" * 64)
+
+        self.assertTrue(source_loaded)
+        with original_open(result) as thumb:
+            self.assertEqual(thumb.size, (80, 40))
+            self.assertEqual(thumb.format, "WEBP")
+            self.assertNotIn("exif", thumb.info)
+
     def test_dimension_pixel_caps_and_invalid_spec(self) -> None:
         source = self.image("wide.png", (20, 10))
         with self.assertRaisesRegex(ThumbnailValidationError, "pixel limit"):

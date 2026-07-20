@@ -20,7 +20,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 _SHA256_RE = re.compile(r"[0-9a-fA-F]{64}\Z")
 _SUPPORTED_SOURCE_FORMATS = frozenset(
-    {"AVIF", "BMP", "GIF", "JPEG", "PNG", "TIFF", "WEBP"}
+    {"AVIF", "BMP", "GIF", "JPEG", "MPO", "PNG", "TIFF", "WEBP"}
 )
 
 
