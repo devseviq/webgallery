@@ -382,6 +382,45 @@ class DashboardServerTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertFalse(bad["ok"])
 
+    def test_library_payload_omits_only_oversized_thumbnail_urls(self) -> None:
+        sha256 = "A" * 64
+        base_item = {
+            "exists": True,
+            "original_url": "/legacy/original",
+            "sha256": sha256,
+        }
+        payload = dashboard_server._sanitize_library_payload(
+            {
+                "items": [
+                    {
+                        **base_item,
+                        "id": 53335,
+                        "width": 17_485,
+                        "height": 9_000,
+                    },
+                    {
+                        **base_item,
+                        "id": 2,
+                        "width": 12_000,
+                        "height": 10_000,
+                    },
+                    {**base_item, "id": 3, "width": None, "height": None},
+                ]
+            }
+        )
+
+        oversized, at_limit, dimensions_missing = payload["items"]
+        self.assertEqual(oversized["original_url"], "/original/53335")
+        self.assertEqual(oversized["url"], "/original/53335")
+        self.assertIsNone(oversized["thumbnail_url"])
+        self.assertEqual(
+            at_limit["thumbnail_url"], f"/thumb/{sha256.casefold()}.webp"
+        )
+        self.assertEqual(
+            dimensions_missing["thumbnail_url"],
+            f"/thumb/{sha256.casefold()}.webp",
+        )
+
     def test_library_status_facets_tags_and_transfer_get_routes(self) -> None:
         for path in ("/api/library/status", "/api/library/facets"):
             with self.subTest(path=path):

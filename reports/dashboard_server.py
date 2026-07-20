@@ -34,6 +34,7 @@ if str(APP_SRC_ROOT) not in sys.path:
 
 from dl_engine import index_library, library_browser, library_transfer  # noqa: E402
 from dl_engine.gallery_thumbnails import (  # noqa: E402
+    DEFAULT_THUMBNAIL_SPEC,
     ThumbnailError,
     ensure_thumbnail,
 )
@@ -345,11 +346,23 @@ def _sanitize_library_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
             else None
         )
         sha256 = item.get("sha256")
+        width = item.get("width")
+        height = item.get("height")
+        source_exceeds_thumbnail_limit = (
+            isinstance(width, int)
+            and not isinstance(width, bool)
+            and isinstance(height, int)
+            and not isinstance(height, bool)
+            and width > 0
+            and height > 0
+            and width * height > DEFAULT_THUMBNAIL_SPEC.max_source_pixels
+        )
         thumbnail_url = (
             f"/thumb/{sha256.casefold()}.webp"
             if isinstance(sha256, str)
             and re.fullmatch(r"[0-9A-Fa-f]{64}", sha256)
             and media_allowed
+            and not source_exceeds_thumbnail_limit
             else None
         )
         item["original_url"] = original_url
