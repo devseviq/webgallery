@@ -886,15 +886,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/" and not query:
             self._redirect("/reports/download-queue-dashboard.html", head_only=head_only)
             return
-        if path in {"/library", "/library/"} and not query:
-            self._redirect("/reports/library-browser.html", head_only=head_only)
+        if path in {"/library", "/library/"}:
+            location = "/reports/library-browser.html"
+            if query:
+                location = f"{location}?{query}"
+            self._redirect(location, head_only=head_only)
             return
         if path in {"/reports", "/reports/"} and not query:
             self._redirect("/reports/dashboard.html", head_only=head_only)
             return
         if path.startswith("/reports/"):
             name = path.removeprefix("/reports/")
-            if not query and name in _GENERATED_REPORTS | _SOURCE_REPORTS:
+            if name in _SOURCE_REPORTS or (not query and name in _GENERATED_REPORTS):
                 self._send_static_report(name, head_only=head_only)
             else:
                 self.send_error(404, "not found")

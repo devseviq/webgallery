@@ -1030,7 +1030,7 @@
         setAutocompleteIndex(autocompleteIndex + 1);
       } else if (event.key === 'ArrowUp' && autocompleteItems.length) {
         event.preventDefault();
-        setAutocompleteIndex(autocompleteIndex - 1);
+        setAutocompleteIndex(autocompleteIndex < 0 ? autocompleteItems.length - 1 : autocompleteIndex - 1);
       } else if (event.key === 'Enter' && autocompleteIndex >= 0) {
         event.preventDefault();
         applyExactTag(autocompleteItems[autocompleteIndex].name);

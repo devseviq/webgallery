@@ -298,6 +298,37 @@ class DashboardServerTests(unittest.TestCase):
                 self.assertEqual(headers["content-type"], "text/html; charset=utf-8")
                 self.assert_security_headers(headers)
 
+    def test_library_query_state_redirects_and_reloads_only_source_report(self) -> None:
+        query = "preset=desktop-4k&bucket=4K&tag=blue%20sky&seed=17"
+        location = f"/reports/library-browser.html?{query}"
+        for path in ("/library", "/library/"):
+            with self.subTest(path=path):
+                status, headers, payload = self.request("GET", f"{path}?{query}")
+                self.assertEqual(status, 302)
+                self.assertEqual(headers["location"], location)
+                self.assertEqual(payload, b"")
+                self.assert_security_headers(headers)
+
+        for method, expected_payload in (("GET", b"<h1>library</h1>"), ("HEAD", b"")):
+            with self.subTest(method=method, path=location):
+                status, headers, payload = self.request(method, location)
+                self.assertEqual(status, 200)
+                self.assertEqual(payload, expected_payload)
+                self.assertEqual(headers["content-type"], "text/html; charset=utf-8")
+                self.assert_security_headers(headers)
+
+        for path in (
+            "/reports/download-queue-dashboard.html?view=library",
+            "/reports/dashboard.html?view=library",
+            "/reports/private.csv?view=library",
+            "/reports/dashboard_server.py?view=library",
+        ):
+            with self.subTest(path=path):
+                status, headers, payload = self.request("HEAD", path)
+                self.assertEqual(status, 404)
+                self.assertEqual(payload, b"")
+                self.assert_security_headers(headers)
+
     def test_denies_workspace_secrets_traversal_and_arbitrary_reports(self) -> None:
         denied = (
             "/.wallpaper-download-queue/state.json",

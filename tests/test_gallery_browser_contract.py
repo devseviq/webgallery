@@ -201,6 +201,20 @@ class GalleryBrowserContractTests(unittest.TestCase):
         key_body = _function_body(self.script, "handleAutocompleteKey")
         for key in ("ArrowDown", "ArrowUp", "Enter", "Escape"):
             self.assertIn(key, key_body)
+        self.assertIn(
+            "setAutocompleteIndex(autocompleteIndex + 1)",
+            key_body,
+        )
+        self.assertIn(
+            "setAutocompleteIndex(autocompleteIndex < 0 ? "
+            "autocompleteItems.length - 1 : autocompleteIndex - 1)",
+            key_body,
+        )
+        autocomplete_index = _function_body(self.script, "setAutocompleteIndex")
+        self.assertIn(
+            "(index + autocompleteItems.length) % autocompleteItems.length",
+            autocomplete_index,
+        )
         render_body = _function_body(self.script, "renderAutocomplete")
         self.assertIn("item.image_count", render_body)
         self.assertIn("role', 'option", render_body)
