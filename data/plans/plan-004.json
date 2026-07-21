@@ -4,20 +4,23 @@
   "artifact_version": 1,
   "created_at": "2026-07-21T00:09:23+00:00",
   "status": "executed",
-  "description": "Package a fail-closed schema-4 gallery-index publication workflow with candidate build and manifest validation, an authoritative SND-HOST queue/writer hold, recoverable atomic activation, post-publication verification, and rollback while preserving legacy 8090 until an explicit cutover.",
+  "publication_status": "planned-not-published",
+  "description": "Package a fail-closed schema-4 gallery-index publication workflow with candidate build and manifest validation, an authoritative SND-HOST queue/writer hold, recoverable journaled activation with one same-volume atomic main-database replacement, post-publication verification, and rollback while preserving legacy 8090 until an explicit cutover.",
   "slug": "package-a-fail-closed",
   "planner_kind": "planner-refactor",
   "source_discovery_docs": [
-    "docs/discovery-picture-category-navigation.md"
+    "docs/discovery-picture-category-navigation.md",
+    "docs/discovery-gallery-publication-audit.md"
   ],
   "source_roadmap": "docs/GALLERY_ROADMAP.md",
   "phase": "6 Packaging",
   "behavioral_invariants": [
     "Canonical images, sidecars, provider ledgers, queue records, and the sibling schema-2 wallpaper_library.sqlite are never rewritten by gallery publication.",
     "Candidate preparation or verification failure leaves the canonical schema-3 gallery database and legacy 8090 listener unchanged.",
-    "Publication fails closed unless SND-HOST identity, queue hold, zero descendants/index writers, stable DB-WAL-SHM fingerprints, verified schema-4 candidate identity, and stopped cutover listener are proven."
+    "Publication fails closed unless SND-HOST identity, an externally owned queue hold, zero descendants/index writers, stable DB-WAL-SHM fingerprints, fresh under-hold candidate and durable-input verification, and a stopped cutover listener are proven.",
+    "The publisher never releases the external hold or stops/starts 8090; it can only report release eligibility and listener-restoration requirements to their external owners."
   ],
-  "rollback_strategy": "Retain a hashed same-volume backup of the canonical DB set, restore it automatically on activation or post-publish verification failure, and release any queue hold only after the canonical read-only contract passes.",
+  "rollback_strategy": "Retain a hashed same-volume backup and durable activation journal, restore the prior canonical set after any activation or post-publish failure including interrupts, re-raise KeyboardInterrupt/SystemExit after cleanup, and never release the externally owned queue hold; report release eligibility only after canonical read-only verification passes.",
   "legacy_status": "",
   "next_letter": "wpm",
   "agents": [
@@ -36,7 +39,7 @@
     {
       "letter": "wpk",
       "name": "implement-gallery-publication",
-      "scope": "Implement candidate preparation, manifest validation, settled writer and listener preflight, same-volume backup and atomic activation, automatic rollback, post-publication verification, and complete exception rollback using explicit paths and WhatIf-first orchestration.",
+      "scope": "Implement candidate preparation, manifest validation, under-hold freshness proof, settled writer and listener preflight, hashed backup and recoverable journaled activation, interrupt-safe rollback, post-publication verification, and WhatIf-first orchestration using explicit paths.",
       "deps": [
         "wpj"
       ],
@@ -81,7 +84,7 @@
     ]
   },
   "conflicts": [
-    "{'files': ['docs/INDEX_LIBRARY.md', 'src/dl_engine/index_library.py'], 'reason': 'Schema and query documentation', 'mitigation': 'WPK owns the implementation; dependent WPL updates the operator contract only after WPK completes.'}"
+    "docs/INDEX_LIBRARY.md <-> src/dl_engine/index_library.py | Schema and query documentation | WPK owns implementation; dependent WPL updates the operator contract after WPK completes."
   ],
   "integration_steps": [
     "WPJ freezes the manifest and state-machine contract before WPK implements it.",
@@ -94,14 +97,16 @@
     "campaign_title": "Safe Schema-4 Gallery Publication",
     "goal_statement": "Provide a tested, operator-safe schema-4 gallery-index packaging and publication path so SND-HOST can build and prove a candidate while downloads continue, then activate it only inside an explicit maintenance and cutover boundary without risking the last verified gallery snapshot, canonical media, durable evidence, or the sibling maintenance index.",
     "exit_criteria": [
-      "A versioned JSON manifest requires an existing schema-4 candidate main database, exact size and SHA-256, verified library/database identity, zero-or-absent WAL, and rejects orphan WAL/SHM-only artifacts.",
+      "A versioned JSON manifest requires an existing schema-4 candidate main database, exact size and SHA-256, verified library/database identity, durable-input fingerprints, zero-or-absent WAL, and rejects orphan WAL/SHM-only artifacts.",
       "The manifest and tests distinguish publication-manifest schema, exhaustive-verification report schema, and SQLite user/metadata schema; a report's top-level schema_version is never treated as the database schema.",
       "WhatIf and candidate-only modes do not modify the canonical gallery database, its WAL/SHM set, queue state, listener state, canonical media, sidecars, ledgers, or sibling schema-2 database.",
-      "Apply fails closed unless exact VERIFIED snd-host identity, an authoritative queue hold, zero downloader descendants and index writers, a settled DB/WAL/SHM interval, verified candidate identity, same-volume activation, and an explicitly stopped 8090 cutover listener are all proven.",
-      "Activation retains a hashed rollback artifact, uses atomic same-volume replacement, verifies the canonical path after reopen, restores the prior snapshot on injected activation or verification failure, and releases no hold before success.",
-      "Every ingest or publication exception rolls back and closes SQLite connections without partially publishing schema, derived data, reports, manifests, or live files.",
-      "Failure-injection tests cover candidate build failure, manifest drift, open handles, nonzero WAL, orphan sidecars, writer/listener activity, replacement failure, post-publish verification failure, rollback restoration, and unchanged-live guarantees.",
-      "The schema-4 candidate passes exhaustive verification and the complete alternate-8091 HTTP/browser matrix while the canonical schema-3 database and legacy 8090 tuple remain unchanged; live cutover still requires its explicit apply flag.",
+      "The SND-HOST Apply wrapper pins final resolved paths to F:\\Wallpapers\\webgallery_library.sqlite, F:\\Wallpapers\\library, both documented _metadata ledgers, and a dedicated same-volume backup/recovery root; arbitrary paths remain portable-core/test only.",
+      "Apply fails closed unless exact VERIFIED snd-host identity, an externally acquired authoritative queue hold, zero downloader descendants and index writers, a settled DB/WAL/SHM interval, a fresh exhaustive under-hold verification bound to current library and ledger fingerprints, same-volume activation, and an explicitly stopped 8090 cutover listener are all proven.",
+      "Activation retains a hashed rollback artifact and durable journal, requires a closed/checkpointed candidate and fail-closed canonical sidecar state, performs one same-volume atomic main-database replacement without claiming multi-file atomicity, verifies the canonical path after reopen, and restores the prior snapshot on any injected failure.",
+      "Ordinary ingest exceptions roll back and close SQLite connections; after canonical mutation, activation catches BaseException only to restore state, then re-raises KeyboardInterrupt/SystemExit and never leaves partially published schema, reports, manifests, or live files.",
+      "The publisher never releases an externally owned queue hold or stops/starts 8090; it reports release eligibility and whether the external listener owner must restore the captured pre-cutover launch tuple, and rollback failure requires the hold to remain asserted.",
+      "Failure-injection tests cover candidate build failure, stale source fingerprints, manifest drift, open handles, nonzero WAL, orphan sidecars, writer/listener activity, replacement failure, interruption, post-publish verification failure, rollback restoration, hold ownership, and unchanged-live guarantees.",
+      "The schema-4 candidate passes exhaustive verification and the complete alternate-8091 HTTP/browser matrix using unique QA-owned cache, report, environment, and queue roots while the canonical schema-3 database and legacy 8090 tuple remain unchanged; live cutover still requires its explicit apply flag.",
       "Compile, full pytest, targeted publication tests, diff-check, plan validation, and documentation drift checks pass with zero failures."
     ],
     "impact_assessment": [
@@ -200,7 +205,7 @@
       {
         "letter": "wpk",
         "name": "implement-gallery-publication",
-        "scope": "Implement candidate preparation, manifest validation, settled writer and listener preflight, same-volume backup and atomic activation, automatic rollback, post-publication verification, and complete exception rollback using explicit paths and WhatIf-first orchestration.",
+      "scope": "Implement candidate preparation, manifest validation, under-hold freshness proof, settled writer and listener preflight, hashed backup and recoverable journaled activation, interrupt-safe rollback, post-publication verification, and WhatIf-first orchestration using explicit paths.",
         "deps": [
           "wpj"
         ],
@@ -308,7 +313,7 @@
       }
     ],
     "conflict_zone_analysis": [
-      "{'files': ['docs/INDEX_LIBRARY.md', 'src/dl_engine/index_library.py'], 'reason': 'Schema and query documentation', 'mitigation': 'WPK owns the implementation; dependent WPL updates the operator contract only after WPK completes.'}"
+      "docs/INDEX_LIBRARY.md <-> src/dl_engine/index_library.py | Schema and query documentation | WPK owns implementation; dependent WPL updates the operator contract after WPK completes."
     ],
     "integration_points": [
       "WPJ freezes the manifest and state-machine contract before WPK implements it.",
@@ -338,8 +343,32 @@
       {
         "risk": "Path/mtime-only verification evidence can become stale after publication.",
         "likelihood": "medium",
-        "impact": "medium",
-        "mitigation": "Bind manifests and post-publish reports to exact DB path, schema, byte length, SHA-256, library root, and generated timestamp."
+        "impact": "high",
+        "mitigation": "Bind manifests to exact candidate bytes and durable-input fingerprints, then rerun exhaustive verification after the external hold and zero-writer window before activation."
+      },
+      {
+        "risk": "A power loss or interrupt can occur after the first canonical filesystem mutation.",
+        "likelihood": "low",
+        "impact": "high",
+        "mitigation": "Persist a recovery journal before mutation; narrowly catch BaseException during activation, attempt exact restoration, and re-raise KeyboardInterrupt/SystemExit after cleanup."
+      },
+      {
+        "risk": "Describing main/WAL/SHM activation as one atomic replacement hides an impossible multi-file guarantee.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Require closed/checkpointed databases and fail-closed sidecar/handle checks; make one same-volume atomic main-file replacement inside a recoverable journaled transaction."
+      },
+      {
+        "risk": "A publisher that releases or resumes an externally acquired hold can race the operator or conceal rollback failure.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Treat the hold and 8090 listener as externally owned; return release and restart requirements only after canonical verification and require the hold to remain asserted on rollback failure."
+      },
+      {
+        "risk": "An explicit but mistyped SND-HOST path can target the wrong database or evidence root.",
+        "likelihood": "low",
+        "impact": "high",
+        "mitigation": "Pin resolved Apply paths in the SND-HOST wrapper to the documented canonical DB, library, both ledger, backup, and recovery roots; keep arbitrary paths in the portable core and tests only."
       },
       {
         "risk": "The exhaustive verifier can reject an otherwise healthy schema-4 database when canonical media layout has drifted.",
@@ -370,7 +399,9 @@
       "git diff --check",
       "Run WhatIf and failure-injection publication scenarios against temporary same-volume databases; compare live DB/WAL/SHM hashes and 8090 listener tuple before and after.",
       "Validate publication-manifest, verification-report, PRAGMA user_version, and schema_metadata versions as distinct fields.",
+      "Prove stale candidates and changed library/ledger fingerprints fail before activation; prove interrupt cleanup restores exact bytes before re-raise without releasing the hold or starting 8090.",
       "Build and exhaustively verify a schema-4 candidate, then execute the Plan 003 alternate-8091 HTTP/browser, viewport, zoom, keyboard, history, original-load, and cleanup matrix without POSTs or 8090 cutover.",
+      "Use unique QA-owned cache, report, environment, and queue roots for alternate-8091 verification and record their exact cleanup or retention outcome.",
       "If exhaustive verification fails, record the exact issue taxonomy and allow only explicitly labelled diagnostics; no partial browser pass may satisfy promotion or authorize media repair."
     ],
     "documentation_updates": [
