@@ -1,0 +1,2180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.wallpapers/schemas/gallery-publication-manifest-v1.json",
+  "title": "Gallery index publication manifest v1",
+  "description": "Fail-closed evidence for preparing, verifying, activating, and restoring the SND-HOST schema-4 gallery index.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_schema_version",
+    "semantic_contract_version",
+    "state",
+    "state_transition",
+    "created_at",
+    "updated_at",
+    "machine_identity",
+    "paths",
+    "candidate",
+    "durable_inputs",
+    "verification",
+    "last_failed_verification",
+    "maintenance",
+    "authorization",
+    "backup",
+    "pre_activation_failure",
+    "activation",
+    "post_publish",
+    "rollback",
+    "result"
+  ],
+  "properties": {
+    "manifest_schema_version": { "const": 1 },
+    "semantic_contract_version": { "const": 1 },
+    "state": {
+      "enum": [
+        "candidate-built",
+        "candidate-verified",
+        "ready-to-publish",
+        "published",
+        "rolled-back"
+      ]
+    },
+    "state_transition": { "$ref": "#/$defs/stateTransition" },
+    "created_at": { "$ref": "#/$defs/utcTimestamp" },
+    "updated_at": { "$ref": "#/$defs/utcTimestamp" },
+    "machine_identity": { "$ref": "#/$defs/machineIdentity" },
+    "paths": { "$ref": "#/$defs/paths" },
+    "candidate": { "$ref": "#/$defs/candidate" },
+    "durable_inputs": { "$ref": "#/$defs/durableInputs" },
+    "verification": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/successfulVerification" }
+      ]
+    },
+    "last_failed_verification": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/failedVerification" }
+      ]
+    },
+    "maintenance": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/maintenance" }
+      ]
+    },
+    "authorization": { "$ref": "#/$defs/authorization" },
+    "backup": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/backup" }
+      ]
+    },
+    "pre_activation_failure": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/preActivationFailure" }
+      ]
+    },
+    "activation": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/activation" }
+      ]
+    },
+    "post_publish": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/postPublish" }
+      ]
+    },
+    "rollback": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/rollback" }
+      ]
+    },
+    "result": { "$ref": "#/$defs/result" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "state": { "const": "candidate-built" } },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "state_transition": {
+            "allOf": [
+              { "$ref": "#/$defs/stateTransition" },
+              {
+                "properties": {
+                  "from_state": { "type": "null" },
+                  "previous_manifest": { "type": "null" }
+                }
+              }
+            ]
+          },
+          "verification": { "type": "null" },
+          "maintenance": { "type": "null" },
+          "authorization": { "$ref": "#/$defs/inactiveAuthorization" },
+          "backup": { "type": "null" },
+          "pre_activation_failure": { "type": "null" },
+          "activation": { "type": "null" },
+          "post_publish": { "type": "null" },
+          "rollback": { "type": "null" },
+          "result": { "$ref": "#/$defs/preCutoverResult" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "state": { "const": "candidate-verified" } },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "state_transition": {
+            "allOf": [
+              { "$ref": "#/$defs/stateTransition" },
+              { "properties": { "from_state": { "const": "candidate-built" } } }
+            ]
+          },
+          "verification": { "$ref": "#/$defs/successfulVerification" },
+          "maintenance": { "type": "null" },
+          "authorization": { "$ref": "#/$defs/inactiveAuthorization" },
+          "backup": { "type": "null" },
+          "pre_activation_failure": { "type": "null" },
+          "activation": { "type": "null" },
+          "post_publish": { "type": "null" },
+          "rollback": { "type": "null" },
+          "result": { "$ref": "#/$defs/preCutoverResult" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "state": { "const": "ready-to-publish" } },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "state_transition": {
+            "allOf": [
+              { "$ref": "#/$defs/stateTransition" },
+              { "properties": { "from_state": { "const": "candidate-verified" } } }
+            ]
+          },
+          "verification": {
+            "$ref": "#/$defs/underHoldVerification"
+          },
+          "maintenance": { "$ref": "#/$defs/maintenance" },
+          "authorization": { "$ref": "#/$defs/activeAuthorization" }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "last_failed_verification": { "type": "null" },
+              "backup": { "type": "null" },
+              "pre_activation_failure": { "type": "null" },
+              "activation": { "type": "null" },
+              "post_publish": { "type": "null" },
+              "rollback": { "type": "null" },
+              "result": { "$ref": "#/$defs/readyResult" }
+            }
+          },
+          {
+            "properties": {
+              "backup": {
+                "oneOf": [
+                  { "type": "null" },
+                  { "$ref": "#/$defs/backup" }
+                ]
+              },
+              "pre_activation_failure": { "$ref": "#/$defs/preActivationFailure" },
+              "activation": { "type": "null" },
+              "post_publish": { "type": "null" },
+              "rollback": { "type": "null" },
+              "result": { "$ref": "#/$defs/failedRecoveryResult" }
+            }
+          },
+          {
+            "properties": {
+              "backup": { "$ref": "#/$defs/backup" },
+              "pre_activation_failure": { "type": "null" },
+              "activation": { "$ref": "#/$defs/failedActivation" },
+              "post_publish": { "type": "null" },
+              "rollback": { "$ref": "#/$defs/failedRollback" },
+              "result": { "$ref": "#/$defs/failedRecoveryResult" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": { "state": { "const": "published" } },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "state_transition": {
+            "allOf": [
+              { "$ref": "#/$defs/stateTransition" },
+              { "properties": { "from_state": { "const": "ready-to-publish" } } }
+            ]
+          },
+          "verification": { "$ref": "#/$defs/underHoldVerification" },
+          "maintenance": { "$ref": "#/$defs/maintenance" },
+          "authorization": { "$ref": "#/$defs/activeAuthorization" },
+          "backup": { "$ref": "#/$defs/backup" },
+          "pre_activation_failure": { "type": "null" },
+          "post_publish": { "$ref": "#/$defs/postPublish" }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "last_failed_verification": { "type": "null" },
+              "activation": { "$ref": "#/$defs/successfulActivation" },
+              "rollback": { "type": "null" },
+              "result": { "$ref": "#/$defs/publishedResult" }
+            }
+          },
+          {
+            "properties": {
+              "activation": { "$ref": "#/$defs/publishedRecoveryActivation" },
+              "rollback": { "$ref": "#/$defs/failedRollback" },
+              "result": { "$ref": "#/$defs/failedRecoveryResult" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": { "state": { "const": "rolled-back" } },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "state_transition": {
+            "allOf": [
+              { "$ref": "#/$defs/stateTransition" },
+              {
+                "properties": {
+                  "from_state": { "enum": ["ready-to-publish", "published"] }
+                }
+              }
+            ]
+          },
+          "verification": { "$ref": "#/$defs/underHoldVerification" },
+          "maintenance": { "$ref": "#/$defs/maintenance" },
+          "authorization": { "$ref": "#/$defs/activeAuthorization" },
+          "backup": { "$ref": "#/$defs/backup" },
+          "pre_activation_failure": { "type": "null" },
+          "activation": { "$ref": "#/$defs/rolledBackActivation" },
+          "post_publish": {
+            "oneOf": [
+              { "type": "null" },
+              { "$ref": "#/$defs/postPublish" }
+            ]
+          },
+          "rollback": { "$ref": "#/$defs/successfulRollback" },
+          "result": { "$ref": "#/$defs/rolledBackResult" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "last_failed_verification": { "type": "object" } },
+        "required": ["last_failed_verification"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "allOf": [
+              { "$ref": "#/$defs/result" },
+              { "properties": { "status": { "enum": ["blocked", "failed", "rolled-back"] } } }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,9})?Z$"
+    },
+    "absoluteWindowsPath": {
+      "type": "string",
+      "pattern": "^[A-Za-z]:\\\\"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nullableTimestamp": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/utcTimestamp" }
+      ]
+    },
+    "presentFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "final_path", "exists", "size_bytes", "sha256", "mtime_utc", "volume_serial"],
+      "properties": {
+        "path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "final_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "exists": { "const": true },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "mtime_utc": { "$ref": "#/$defs/utcTimestamp" },
+        "volume_serial": { "type": "string", "minLength": 1 }
+      }
+    },
+    "nonEmptyFile": {
+      "allOf": [
+        { "$ref": "#/$defs/presentFile" },
+        { "properties": { "size_bytes": { "type": "integer", "minimum": 1 } } }
+      ]
+    },
+    "absentFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "final_path", "exists", "size_bytes", "sha256", "mtime_utc", "volume_serial"],
+      "properties": {
+        "path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "final_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "exists": { "const": false },
+        "size_bytes": { "const": 0 },
+        "sha256": { "type": "null" },
+        "mtime_utc": { "type": "null" },
+        "volume_serial": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fileState": {
+      "oneOf": [
+        { "$ref": "#/$defs/presentFile" },
+        { "$ref": "#/$defs/absentFile" }
+      ]
+    },
+    "databaseSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["main", "wal", "shm", "aggregate_sha256"],
+      "properties": {
+        "main": { "$ref": "#/$defs/nonEmptyFile" },
+        "wal": { "$ref": "#/$defs/fileState" },
+        "shm": { "$ref": "#/$defs/fileState" },
+        "aggregate_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "checkpointedDatabaseSet": {
+      "allOf": [
+        { "$ref": "#/$defs/databaseSet" },
+        {
+          "properties": {
+            "wal": {
+              "oneOf": [
+                { "$ref": "#/$defs/absentFile" },
+                {
+                  "allOf": [
+                    { "$ref": "#/$defs/presentFile" },
+                    { "properties": { "size_bytes": { "const": 0 } } }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "closedDatabaseSet": {
+      "allOf": [
+        { "$ref": "#/$defs/checkpointedDatabaseSet" },
+        { "properties": { "shm": { "$ref": "#/$defs/absentFile" } } }
+      ]
+    },
+    "machineIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "machine_id", "instance_id", "computer_name", "qualified_user", "verified_at", "verifier_path"],
+      "properties": {
+        "status": { "const": "VERIFIED" },
+        "machine_id": { "const": "snd-host" },
+        "instance_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "computer_name": { "const": "SND-HOST" },
+        "qualified_user": { "const": "SND-HOST\\Dev" },
+        "verified_at": { "$ref": "#/$defs/utcTimestamp" },
+        "verifier_path": { "$ref": "#/$defs/absoluteWindowsPath" }
+      }
+    },
+    "stateTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from_state", "entered_at", "previous_manifest"],
+      "properties": {
+        "from_state": {
+          "type": ["string", "null"],
+          "enum": [null, "candidate-built", "candidate-verified", "ready-to-publish", "published"]
+        },
+        "entered_at": { "$ref": "#/$defs/utcTimestamp" },
+        "previous_manifest": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/nonEmptyFile" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "from_state": { "type": "null" } }, "required": ["from_state"] },
+          "then": { "properties": { "previous_manifest": { "type": "null" } } },
+          "else": { "properties": { "previous_manifest": { "$ref": "#/$defs/nonEmptyFile" } } }
+        }
+      ]
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_database",
+        "candidate_database",
+        "library_root",
+        "wallhaven_ledger",
+        "provider_ledger",
+        "verification_report_root",
+        "manifest",
+        "backup_directory",
+        "recovery_journal",
+        "recovery_result_root",
+        "queue_state",
+        "hold_path",
+        "sibling_database"
+      ],
+      "properties": {
+        "canonical_database": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "candidate_database": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "library_root": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "wallhaven_ledger": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "provider_ledger": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "verification_report_root": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "manifest": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "backup_directory": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "recovery_journal": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "recovery_result_root": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "queue_state": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "hold_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "sibling_database": { "$ref": "#/$defs/absoluteWindowsPath" }
+      }
+    },
+    "sqliteIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pragma_user_version",
+        "metadata_schema_version",
+        "quick_check",
+        "journal_mode",
+        "connection_closed",
+        "wal_checkpointed",
+        "required_schema4_columns_present",
+        "table_counts"
+      ],
+      "properties": {
+        "pragma_user_version": { "type": "integer", "minimum": 0 },
+        "metadata_schema_version": { "type": ["integer", "null"], "minimum": 0 },
+        "quick_check": { "const": "ok" },
+        "journal_mode": { "enum": ["wal", "delete"] },
+        "connection_closed": { "const": true },
+        "wal_checkpointed": { "const": true },
+        "required_schema4_columns_present": { "type": "boolean" },
+        "table_counts": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "minProperties": 1
+        }
+      }
+    },
+    "schema4SqliteIdentity": {
+      "allOf": [
+        { "$ref": "#/$defs/sqliteIdentity" },
+        {
+          "properties": {
+            "pragma_user_version": { "const": 4 },
+            "metadata_schema_version": { "const": 4 },
+            "quick_check": { "const": "ok" },
+            "connection_closed": { "const": true },
+            "wal_checkpointed": { "const": true },
+            "required_schema4_columns_present": { "const": true },
+            "table_counts": {
+              "type": "object",
+              "required": ["images", "tags", "image_tags", "tag_suggestions", "library_facets"]
+            }
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["built_at", "generation_id", "database", "sqlite"],
+      "properties": {
+        "built_at": { "$ref": "#/$defs/utcTimestamp" },
+        "generation_id": { "type": "string", "minLength": 1 },
+        "database": { "$ref": "#/$defs/closedDatabaseSet" },
+        "sqlite": { "$ref": "#/$defs/schema4SqliteIdentity" }
+      }
+    },
+    "inputFingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "final_path",
+        "kind",
+        "exists",
+        "captured_at",
+        "entry_count",
+        "content_size_bytes",
+        "content_sha256",
+        "sha256"
+      ],
+      "properties": {
+        "path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "final_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "kind": { "enum": ["library-inventory", "sidecar-inventory", "wallhaven-ledger", "provider-ledger"] },
+        "exists": { "type": "boolean" },
+        "captured_at": { "$ref": "#/$defs/utcTimestamp" },
+        "entry_count": { "type": "integer", "minimum": 0 },
+        "content_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "content_sha256": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sha256" }
+          ]
+        },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "exists": { "const": false } },
+            "required": ["exists"]
+          },
+          "then": {
+            "properties": {
+              "entry_count": { "const": 0 },
+              "content_size_bytes": { "type": "null" },
+              "content_sha256": { "type": "null" }
+            }
+          },
+          "else": {
+            "properties": {
+              "content_size_bytes": { "type": "integer", "minimum": 0 },
+              "content_sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      ]
+    },
+    "durableInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation_id", "aggregate_sha256", "library", "sidecars", "wallhaven_ledger", "provider_ledger"],
+      "properties": {
+        "generation_id": { "type": "string", "minLength": 1 },
+        "aggregate_sha256": { "$ref": "#/$defs/sha256" },
+        "library": {
+          "allOf": [
+            { "$ref": "#/$defs/inputFingerprint" },
+            {
+              "properties": {
+                "kind": { "const": "library-inventory" },
+                "exists": { "const": true }
+              }
+            }
+          ]
+        },
+        "sidecars": {
+          "allOf": [
+            { "$ref": "#/$defs/inputFingerprint" },
+            {
+              "properties": {
+                "kind": { "const": "sidecar-inventory" },
+                "exists": { "const": true }
+              }
+            }
+          ]
+        },
+        "wallhaven_ledger": {
+          "allOf": [
+            { "$ref": "#/$defs/inputFingerprint" },
+            { "properties": { "kind": { "const": "wallhaven-ledger" } } }
+          ]
+        },
+        "provider_ledger": {
+          "allOf": [
+            { "$ref": "#/$defs/inputFingerprint" },
+            { "properties": { "kind": { "const": "provider-ledger" } } }
+          ]
+        }
+      }
+    },
+    "issueCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "count"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "verificationEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "report",
+        "report_format_version",
+        "exit_code",
+        "ok",
+        "exhaustive",
+        "issue_count",
+        "issue_taxonomy",
+        "database_path",
+        "library_root",
+        "database_sha256",
+        "durable_inputs_sha256",
+        "generated_at",
+        "verified_under_hold"
+      ],
+      "properties": {
+        "report": { "$ref": "#/$defs/nonEmptyFile" },
+        "report_format_version": { "const": 1 },
+        "exit_code": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "ok": { "type": "boolean" },
+        "exhaustive": { "const": true },
+        "issue_count": { "type": "integer", "minimum": 0 },
+        "issue_taxonomy": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/issueCount" }
+        },
+        "database_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "library_root": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "database_sha256": { "$ref": "#/$defs/sha256" },
+        "durable_inputs_sha256": { "$ref": "#/$defs/sha256" },
+        "generated_at": { "$ref": "#/$defs/utcTimestamp" },
+        "verified_under_hold": { "type": "boolean" }
+      }
+    },
+    "successfulVerification": {
+      "allOf": [
+        { "$ref": "#/$defs/verificationEvidence" },
+        {
+          "properties": {
+            "exit_code": { "const": 0 },
+            "ok": { "const": true },
+            "issue_count": { "const": 0 },
+            "issue_taxonomy": { "type": "array", "maxItems": 0 }
+          }
+        }
+      ]
+    },
+    "failedVerification": {
+      "allOf": [
+        { "$ref": "#/$defs/verificationEvidence" },
+        { "not": { "$ref": "#/$defs/successfulVerification" } }
+      ]
+    },
+    "underHoldVerification": {
+      "allOf": [
+        { "$ref": "#/$defs/successfulVerification" },
+        { "properties": { "verified_under_hold": { "const": true } } }
+      ]
+    },
+    "hold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "externally_owned",
+        "owner",
+        "token_id",
+        "token_sha256",
+        "hold_file",
+        "pause_file",
+        "queue_state",
+        "queue_state_schema_version",
+        "acquired_at",
+        "expires_at",
+        "acknowledged_at",
+        "acknowledgement_sha256",
+        "task_acknowledged",
+        "publisher_may_release"
+      ],
+      "properties": {
+        "externally_owned": { "const": true },
+        "owner": { "type": "string", "minLength": 1 },
+        "token_id": { "type": "string", "minLength": 1 },
+        "token_sha256": { "$ref": "#/$defs/sha256" },
+        "hold_file": { "$ref": "#/$defs/nonEmptyFile" },
+        "pause_file": { "$ref": "#/$defs/presentFile" },
+        "queue_state": { "$ref": "#/$defs/nonEmptyFile" },
+        "queue_state_schema_version": { "const": 1 },
+        "acquired_at": { "$ref": "#/$defs/utcTimestamp" },
+        "expires_at": { "$ref": "#/$defs/utcTimestamp" },
+        "acknowledged_at": { "$ref": "#/$defs/utcTimestamp" },
+        "acknowledgement_sha256": { "$ref": "#/$defs/sha256" },
+        "task_acknowledged": { "const": true },
+        "publisher_may_release": { "const": false }
+      }
+    },
+    "scheduledTaskObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "name", "definition_sha256", "state", "last_result", "instance_id", "observed_at", "acknowledged_at"],
+      "properties": {
+        "path": { "const": "\\" },
+        "name": { "const": "Wallpaper Download Queue" },
+        "definition_sha256": { "$ref": "#/$defs/sha256" },
+        "state": { "type": "string", "minLength": 1 },
+        "last_result": { "type": ["integer", "null"] },
+        "instance_id": { "type": ["string", "null"], "minLength": 1 },
+        "observed_at": { "$ref": "#/$defs/utcTimestamp" },
+        "acknowledged_at": { "$ref": "#/$defs/utcTimestamp" }
+      }
+    },
+    "writerSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "elapsed_seconds", "sampled_at", "downloader_descendant_count", "index_writer_count", "process_ids"],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 0 },
+        "elapsed_seconds": { "type": "number", "minimum": 0 },
+        "sampled_at": { "$ref": "#/$defs/utcTimestamp" },
+        "downloader_descendant_count": { "const": 0 },
+        "index_writer_count": { "const": 0 },
+        "process_ids": {
+          "type": "array",
+          "maxItems": 0,
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "recoveryWriterSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "elapsed_milliseconds",
+        "sampled_at",
+        "downloader_descendant_count",
+        "index_writer_count",
+        "process_ids"
+      ],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 0 },
+        "elapsed_milliseconds": { "type": "integer", "minimum": 0 },
+        "sampled_at": { "$ref": "#/$defs/utcTimestamp" },
+        "downloader_descendant_count": { "const": 0 },
+        "index_writer_count": { "const": 0 },
+        "process_ids": {
+          "type": "array",
+          "maxItems": 0,
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "listenerBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "port", "pid"],
+      "properties": {
+        "address": { "type": "string", "minLength": 1 },
+        "port": { "const": 8090 },
+        "pid": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "listenerSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "port", "listen_count", "bindings", "observed_at"],
+      "properties": {
+        "scope": { "const": "all-local-addresses" },
+        "port": { "const": 8090 },
+        "listen_count": { "type": "integer", "minimum": 0 },
+        "bindings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/listenerBinding" }
+        },
+        "observed_at": { "$ref": "#/$defs/utcTimestamp" }
+      }
+    },
+    "listenerProcess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pid",
+        "qualified_owner",
+        "executable_path",
+        "executable_sha256",
+        "process_started_at",
+        "working_directory",
+        "argument_vector",
+        "observed_at"
+      ],
+      "properties": {
+        "pid": { "type": "integer", "minimum": 1 },
+        "qualified_owner": { "type": "string", "minLength": 1 },
+        "executable_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "executable_sha256": { "$ref": "#/$defs/sha256" },
+        "process_started_at": { "$ref": "#/$defs/utcTimestamp" },
+        "working_directory": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "argument_vector": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "observed_at": { "$ref": "#/$defs/utcTimestamp" }
+      }
+    },
+    "cutoverListener": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "before_snapshot",
+        "before_process",
+        "after_snapshot",
+        "stopped_acknowledged_at",
+        "stopped_acknowledged_by",
+        "stopped_acknowledgement_sha256",
+        "recovery_runbook",
+        "recovery_step",
+        "external_recovery_owner",
+        "restart_automatic"
+      ],
+      "properties": {
+        "before_snapshot": {
+          "allOf": [
+            { "$ref": "#/$defs/listenerSnapshot" },
+            {
+              "properties": {
+                "listen_count": { "type": "integer", "minimum": 1 },
+                "bindings": { "type": "array", "minItems": 1 }
+              }
+            }
+          ]
+        },
+        "before_process": { "$ref": "#/$defs/listenerProcess" },
+        "after_snapshot": {
+          "allOf": [
+            { "$ref": "#/$defs/listenerSnapshot" },
+            {
+              "properties": {
+                "listen_count": { "const": 0 },
+                "bindings": { "type": "array", "maxItems": 0 }
+              }
+            }
+          ]
+        },
+        "stopped_acknowledged_at": { "$ref": "#/$defs/utcTimestamp" },
+        "stopped_acknowledged_by": { "type": "string", "minLength": 1 },
+        "stopped_acknowledgement_sha256": { "$ref": "#/$defs/sha256" },
+        "recovery_runbook": { "$ref": "#/$defs/nonEmptyFile" },
+        "recovery_step": { "type": "string", "minLength": 1 },
+        "external_recovery_owner": { "type": "string", "minLength": 1 },
+        "restart_automatic": { "const": false }
+      }
+    },
+    "portAvailability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "port", "listen_count", "bindings", "observed_at"],
+      "properties": {
+        "scope": { "const": "all-local-addresses" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "listen_count": { "const": 0 },
+        "bindings": { "type": "array", "maxItems": 0 },
+        "observed_at": { "$ref": "#/$defs/utcTimestamp" }
+      }
+    },
+    "recoveryHold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "purpose",
+        "recovery_attempt_id",
+        "authorized_head_sha256",
+        "recovery_started_at",
+        "historical_hold_token_sha256",
+        "hold",
+        "scheduled_task",
+        "minimum_window_milliseconds",
+        "actual_window_milliseconds",
+        "writer_samples",
+        "listener_snapshot",
+        "canonical_handle_free",
+        "maximum_evidence_age_seconds",
+        "verified_at"
+      ],
+      "properties": {
+        "purpose": { "const": "emergency-recovery" },
+        "recovery_attempt_id": { "type": "string", "minLength": 1 },
+        "authorized_head_sha256": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sha256" }
+          ]
+        },
+        "recovery_started_at": { "$ref": "#/$defs/utcTimestamp" },
+        "historical_hold_token_sha256": { "$ref": "#/$defs/sha256" },
+        "hold": { "$ref": "#/$defs/hold" },
+        "scheduled_task": { "$ref": "#/$defs/scheduledTaskObservation" },
+        "minimum_window_milliseconds": { "const": 30000 },
+        "actual_window_milliseconds": { "type": "integer", "minimum": 30000 },
+        "writer_samples": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/recoveryWriterSample" }
+        },
+        "listener_snapshot": {
+          "allOf": [
+            { "$ref": "#/$defs/listenerSnapshot" },
+            {
+              "properties": {
+                "listen_count": { "const": 0 },
+                "bindings": { "type": "array", "maxItems": 0 }
+              }
+            }
+          ]
+        },
+        "canonical_handle_free": { "const": true },
+        "maximum_evidence_age_seconds": { "const": 300 },
+        "verified_at": { "$ref": "#/$defs/utcTimestamp" }
+      }
+    },
+    "settledSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "elapsed_seconds", "sampled_at", "candidate", "canonical", "durable_inputs_sha256"],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 0 },
+        "elapsed_seconds": { "type": "number", "minimum": 0 },
+        "sampled_at": { "$ref": "#/$defs/utcTimestamp" },
+        "candidate": { "$ref": "#/$defs/closedDatabaseSet" },
+        "canonical": { "$ref": "#/$defs/checkpointedDatabaseSet" },
+        "durable_inputs_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "maintenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hold",
+        "scheduled_task",
+        "window_started_at",
+        "window_ended_at",
+        "minimum_window_seconds",
+        "actual_window_seconds",
+        "maximum_evidence_age_seconds",
+        "writer_samples",
+        "settled_samples",
+        "verification_started_at",
+        "verification_completed_at",
+        "evidence_checked_at",
+        "fingerprints_stable",
+        "durable_inputs_current",
+        "canonical_wal_checkpointed",
+        "canonical_shm_handle_free",
+        "cutover_listener",
+        "smoke_port"
+      ],
+      "properties": {
+        "hold": { "$ref": "#/$defs/hold" },
+        "scheduled_task": { "$ref": "#/$defs/scheduledTaskObservation" },
+        "window_started_at": { "$ref": "#/$defs/utcTimestamp" },
+        "window_ended_at": { "$ref": "#/$defs/utcTimestamp" },
+        "minimum_window_seconds": { "const": 30 },
+        "actual_window_seconds": { "type": "number", "minimum": 30 },
+        "maximum_evidence_age_seconds": { "const": 300 },
+        "writer_samples": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/writerSample" }
+        },
+        "settled_samples": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/settledSample" }
+        },
+        "verification_started_at": { "$ref": "#/$defs/utcTimestamp" },
+        "verification_completed_at": { "$ref": "#/$defs/utcTimestamp" },
+        "evidence_checked_at": { "$ref": "#/$defs/utcTimestamp" },
+        "fingerprints_stable": { "const": true },
+        "durable_inputs_current": { "const": true },
+        "canonical_wal_checkpointed": { "const": true },
+        "canonical_shm_handle_free": { "const": true },
+        "cutover_listener": { "$ref": "#/$defs/cutoverListener" },
+        "smoke_port": {
+          "allOf": [
+            { "$ref": "#/$defs/portAvailability" },
+            { "properties": { "port": { "const": 8091 } } }
+          ]
+        }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apply", "cutover", "authorized_at", "authorized_by"],
+      "properties": {
+        "apply": { "type": "boolean" },
+        "cutover": { "type": "boolean" },
+        "authorized_at": { "$ref": "#/$defs/nullableTimestamp" },
+        "authorized_by": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "inactiveAuthorization": {
+      "allOf": [
+        { "$ref": "#/$defs/authorization" },
+        {
+          "properties": {
+            "apply": { "const": false },
+            "cutover": { "const": false },
+            "authorized_at": { "type": "null" },
+            "authorized_by": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "activeAuthorization": {
+      "allOf": [
+        { "$ref": "#/$defs/authorization" },
+        {
+          "properties": {
+            "apply": { "const": true },
+            "cutover": { "const": true },
+            "authorized_at": { "$ref": "#/$defs/utcTimestamp" },
+            "authorized_by": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created_at", "same_volume", "collision_free", "database", "source_database_sha256", "source_sqlite"],
+      "properties": {
+        "created_at": { "$ref": "#/$defs/utcTimestamp" },
+        "same_volume": { "const": true },
+        "collision_free": { "const": true },
+        "database": { "$ref": "#/$defs/checkpointedDatabaseSet" },
+        "source_database_sha256": { "$ref": "#/$defs/sha256" },
+        "source_sqlite": { "$ref": "#/$defs/sqliteIdentity" }
+      }
+    },
+    "preActivationFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "failed_at",
+        "error_code",
+        "error_message",
+        "canonical_unchanged",
+        "canonical_database",
+        "canonical_sqlite",
+        "closure_kind",
+        "recovery_hold",
+        "observed_outputs",
+        "journal"
+      ],
+      "properties": {
+        "phase": {
+          "enum": [
+            "backup-create",
+            "backup-verify",
+            "journal-create",
+            "journal-first-flush",
+            "pre-replace-revalidation",
+            "pre-canonical-mutation-abort"
+          ]
+        },
+        "failed_at": { "$ref": "#/$defs/utcTimestamp" },
+        "error_code": { "type": "string", "minLength": 1 },
+        "error_message": { "type": "string", "minLength": 1 },
+        "canonical_unchanged": { "const": true },
+        "canonical_database": { "$ref": "#/$defs/checkpointedDatabaseSet" },
+        "canonical_sqlite": { "$ref": "#/$defs/sqliteIdentity" },
+        "closure_kind": {
+          "enum": [
+            "synchronous-unstarted-failure",
+            "pre-journal-recovery-close",
+            "publisher-abort",
+            "crash-recovery-close",
+            "operator-abort"
+          ]
+        },
+        "recovery_hold": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/recoveryHold" }
+          ]
+        },
+        "observed_outputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fileState" }
+        },
+        "journal": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/journalEvidence" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "backup-create",
+                  "backup-verify",
+                  "pre-replace-revalidation",
+                  "pre-canonical-mutation-abort"
+                ]
+              }
+            },
+            "required": ["phase"]
+          },
+          "then": {
+            "properties": {
+              "closure_kind": {
+                "enum": ["publisher-abort", "crash-recovery-close", "operator-abort"]
+              },
+              "recovery_hold": { "type": "null" },
+              "journal": {
+                "allOf": [
+                  { "$ref": "#/$defs/journalEvidence" },
+                  {
+                    "properties": {
+                      "status": { "const": "aborted-before-mutation" }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "journal": { "type": "object" } },
+            "required": ["journal"]
+          },
+          "then": {
+            "properties": {
+              "closure_kind": {
+                "enum": ["publisher-abort", "crash-recovery-close", "operator-abort"]
+              },
+              "recovery_hold": { "type": "null" },
+              "journal": {
+                "allOf": [
+                  { "$ref": "#/$defs/journalEvidence" },
+                  {
+                    "properties": {
+                      "status": { "const": "aborted-before-mutation" }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "else": {
+            "oneOf": [
+              {
+                "properties": {
+                  "closure_kind": { "const": "synchronous-unstarted-failure" },
+                  "recovery_hold": { "type": "null" }
+                }
+              },
+              {
+                "properties": {
+                  "closure_kind": { "const": "pre-journal-recovery-close" },
+                  "recovery_hold": { "$ref": "#/$defs/recoveryHold" }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "journalRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transaction_id",
+        "operation_id",
+        "sequence",
+        "intent_sequence",
+        "recorded_at",
+        "action",
+        "phase",
+        "outcome",
+        "target_path",
+        "before",
+        "intended_after",
+        "observed_after",
+        "previous_record_sha256",
+        "record_sha256",
+        "error"
+      ],
+      "properties": {
+        "transaction_id": { "type": "string", "minLength": 1 },
+        "operation_id": { "type": "string", "minLength": 1 },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "intent_sequence": { "type": "integer", "minimum": 0 },
+        "recorded_at": { "$ref": "#/$defs/utcTimestamp" },
+        "action": {
+          "enum": [
+            "backup",
+            "main-replace",
+            "database-sidecar-remove",
+            "canonical-verify",
+            "rollback-restore",
+            "rollback-verify",
+            "transaction-abort"
+          ]
+        },
+        "phase": { "enum": ["intent", "complete", "error"] },
+        "outcome": {
+          "type": ["string", "null"],
+          "enum": [null, "applied", "not-applied", "aborted"]
+        },
+        "target_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "before": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/fileState" }
+          ]
+        },
+        "intended_after": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/fileState" }
+          ]
+        },
+        "observed_after": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/fileState" }
+          ]
+        },
+        "previous_record_sha256": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sha256" }
+          ]
+        },
+        "record_sha256": { "$ref": "#/$defs/sha256" },
+        "error": { "type": ["string", "null"], "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "phase": { "const": "intent" } },
+            "required": ["phase"]
+          },
+          "then": {
+            "properties": {
+              "observed_after": { "type": "null" },
+              "outcome": { "type": "null" },
+              "error": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "phase": { "const": "complete" } },
+            "required": ["phase"]
+          },
+          "then": {
+            "properties": {
+              "observed_after": { "$ref": "#/$defs/fileState" },
+              "outcome": { "enum": ["applied", "not-applied", "aborted"] },
+              "error": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "phase": { "const": "error" } },
+            "required": ["phase"]
+          },
+          "then": {
+            "properties": {
+              "outcome": { "type": "null" },
+              "error": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "transaction-abort" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "phase": { "const": "complete" },
+              "outcome": { "const": "aborted" },
+              "before": { "$ref": "#/$defs/fileState" },
+              "intended_after": { "$ref": "#/$defs/fileState" },
+              "observed_after": { "$ref": "#/$defs/fileState" },
+              "error": { "type": "null" }
+            }
+          },
+          "else": {
+            "properties": {
+              "outcome": {
+                "type": ["string", "null"],
+                "enum": [null, "applied", "not-applied"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "journalSegmentHeader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "journal_format_version",
+        "transaction_id",
+        "generation_id",
+        "segment_index",
+        "segment_kind",
+        "created_at",
+        "manifest_path",
+        "pre_activation_manifest_path",
+        "pre_activation_manifest_sha256",
+        "recovery_hold",
+        "previous_segment_sha256",
+        "anchor_record_sha256",
+        "invalid_predecessor_tail_sha256",
+        "header_sha256"
+      ],
+      "properties": {
+        "journal_format_version": { "const": 1 },
+        "transaction_id": { "type": "string", "minLength": 1 },
+        "generation_id": { "type": "string", "minLength": 1 },
+        "segment_index": { "type": "integer", "minimum": 0 },
+        "segment_kind": { "enum": ["initial", "recovery-continuation", "torn-continuation"] },
+        "created_at": { "$ref": "#/$defs/utcTimestamp" },
+        "manifest_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "pre_activation_manifest_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "pre_activation_manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "recovery_hold": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/recoveryHold" }
+          ]
+        },
+        "previous_segment_sha256": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sha256" }
+          ]
+        },
+        "anchor_record_sha256": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sha256" }
+          ]
+        },
+        "invalid_predecessor_tail_sha256": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sha256" }
+          ]
+        },
+        "header_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "segment_index": { "const": 0 } },
+            "required": ["segment_index"]
+          },
+          "then": {
+            "properties": {
+              "previous_segment_sha256": { "type": "null" },
+              "anchor_record_sha256": { "type": "null" },
+              "invalid_predecessor_tail_sha256": { "type": "null" },
+              "recovery_hold": { "type": "null" },
+              "segment_kind": { "const": "initial" }
+            }
+          },
+          "else": {
+            "properties": {
+              "previous_segment_sha256": { "$ref": "#/$defs/sha256" },
+              "recovery_hold": { "$ref": "#/$defs/recoveryHold" },
+              "segment_kind": { "enum": ["recovery-continuation", "torn-continuation"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "segment_kind": { "const": "torn-continuation" } },
+            "required": ["segment_kind"]
+          },
+          "then": {
+            "properties": {
+              "invalid_predecessor_tail_sha256": { "$ref": "#/$defs/sha256" }
+            }
+          },
+          "else": {
+            "properties": { "invalid_predecessor_tail_sha256": { "type": "null" } }
+          }
+        }
+      ]
+    },
+    "journalSegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "header",
+        "file",
+        "valid_prefix_size_bytes",
+        "torn_final_record",
+        "trailing_bytes_sha256",
+        "parse_error",
+        "valid_prefix_durably_flushed",
+        "records"
+      ],
+      "properties": {
+        "header": { "$ref": "#/$defs/journalSegmentHeader" },
+        "file": { "$ref": "#/$defs/nonEmptyFile" },
+        "valid_prefix_size_bytes": { "type": "integer", "minimum": 1 },
+        "torn_final_record": { "type": "boolean" },
+        "trailing_bytes_sha256": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sha256" }
+          ]
+        },
+        "parse_error": { "type": ["string", "null"], "minLength": 1 },
+        "valid_prefix_durably_flushed": { "const": true },
+        "records": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/journalRecord" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "torn_final_record": { "const": true } },
+            "required": ["torn_final_record"]
+          },
+          "then": {
+            "properties": {
+              "trailing_bytes_sha256": { "$ref": "#/$defs/sha256" },
+              "parse_error": { "type": "string", "minLength": 1 }
+            }
+          },
+          "else": {
+            "properties": {
+              "trailing_bytes_sha256": { "type": "null" },
+              "parse_error": { "type": "null" }
+            }
+          }
+        }
+      ]
+    },
+    "recoveryResultDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recovery_result_schema_version",
+        "recovery_attempt_id",
+        "transaction_id",
+        "generation_id",
+        "completed_at",
+        "machine_identity",
+        "status",
+        "canonical_database",
+        "backup_directory",
+        "journal_head_sha256",
+        "journal_tail_segment_sha256",
+        "terminal_database",
+        "terminal_sqlite",
+        "terminal_match_basis",
+        "terminal_matches_expected",
+        "recovery_hold",
+        "manifest_path",
+        "manifest_cas_expected_sha256",
+        "manifest_pre_cas_observed_sha256",
+        "manifest_pre_cas_matches_expected",
+        "manifest_cas_target_state",
+        "hold_must_remain",
+        "listener_restore_required",
+        "error_code",
+        "error_message"
+      ],
+      "properties": {
+        "recovery_result_schema_version": { "const": 1 },
+        "recovery_attempt_id": { "type": "string", "minLength": 1 },
+        "transaction_id": { "type": "string", "minLength": 1 },
+        "generation_id": { "type": "string", "minLength": 1 },
+        "completed_at": { "$ref": "#/$defs/utcTimestamp" },
+        "machine_identity": { "$ref": "#/$defs/machineIdentity" },
+        "status": { "enum": ["aborted-before-mutation", "rolled-back", "failed"] },
+        "canonical_database": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "backup_directory": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "journal_head_sha256": { "$ref": "#/$defs/sha256" },
+        "journal_tail_segment_sha256": { "$ref": "#/$defs/sha256" },
+        "terminal_database": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/checkpointedDatabaseSet" }
+          ]
+        },
+        "terminal_sqlite": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sqliteIdentity" }
+          ]
+        },
+        "terminal_match_basis": { "enum": ["pre-activation", "backup"] },
+        "terminal_matches_expected": { "type": "boolean" },
+        "recovery_hold": { "$ref": "#/$defs/recoveryHold" },
+        "manifest_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "manifest_cas_expected_sha256": { "$ref": "#/$defs/sha256" },
+        "manifest_pre_cas_observed_sha256": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sha256" }
+          ]
+        },
+        "manifest_pre_cas_matches_expected": { "type": "boolean" },
+        "manifest_cas_target_state": {
+          "enum": ["ready-to-publish", "published", "rolled-back"]
+        },
+        "hold_must_remain": { "const": true },
+        "listener_restore_required": { "const": true },
+        "error_code": { "type": ["string", "null"], "minLength": 1 },
+        "error_message": { "type": ["string", "null"], "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "manifest_pre_cas_matches_expected": { "const": true } },
+            "required": ["manifest_pre_cas_matches_expected"]
+          },
+          "then": {
+            "properties": {
+              "manifest_pre_cas_observed_sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "aborted-before-mutation" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "terminal_database": { "$ref": "#/$defs/checkpointedDatabaseSet" },
+              "terminal_sqlite": { "$ref": "#/$defs/sqliteIdentity" },
+              "terminal_match_basis": { "const": "pre-activation" },
+              "terminal_matches_expected": { "const": true },
+              "manifest_cas_target_state": { "const": "ready-to-publish" },
+              "error_code": { "type": "string", "minLength": 1 },
+              "error_message": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "rolled-back" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "terminal_database": { "$ref": "#/$defs/checkpointedDatabaseSet" },
+              "terminal_sqlite": { "$ref": "#/$defs/sqliteIdentity" },
+              "terminal_match_basis": { "const": "backup" },
+              "terminal_matches_expected": { "const": true },
+              "manifest_cas_target_state": { "const": "rolled-back" }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "error_code": { "type": "null" },
+                  "error_message": { "type": "null" }
+                }
+              },
+              {
+                "properties": {
+                  "error_code": { "type": "string", "minLength": 1 },
+                  "error_message": { "type": "string", "minLength": 1 }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "failed" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "manifest_cas_target_state": {
+                "enum": ["ready-to-publish", "published"]
+              },
+              "error_code": { "type": "string", "minLength": 1 },
+              "error_message": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
+    },
+    "recoveryResultEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "document"],
+      "properties": {
+        "file": { "$ref": "#/$defs/nonEmptyFile" },
+        "document": { "$ref": "#/$defs/recoveryResultDocument" }
+      }
+    },
+    "journalEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "journal_format_version",
+        "transaction_id",
+        "generation_id",
+        "starting_state",
+        "manifest_path",
+        "pre_activation_manifest",
+        "recovery_result",
+        "status",
+        "last_sequence",
+        "head_sha256",
+        "tail_segment_sha256",
+        "segments"
+      ],
+      "properties": {
+        "journal_format_version": { "const": 1 },
+        "transaction_id": { "type": "string", "minLength": 1 },
+        "generation_id": { "type": "string", "minLength": 1 },
+        "starting_state": { "const": "ready-to-publish" },
+        "manifest_path": { "$ref": "#/$defs/absoluteWindowsPath" },
+        "pre_activation_manifest": { "$ref": "#/$defs/nonEmptyFile" },
+        "recovery_result": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/recoveryResultEvidence" }
+          ]
+        },
+        "status": {
+          "enum": [
+            "prepared",
+            "backup-verified",
+            "main-replaced",
+            "canonical-verified",
+            "rollback-started",
+            "restored",
+            "aborted-before-mutation",
+            "recovery-required"
+          ]
+        },
+        "last_sequence": { "type": "integer", "minimum": 0 },
+        "head_sha256": { "$ref": "#/$defs/sha256" },
+        "tail_segment_sha256": { "$ref": "#/$defs/sha256" },
+        "segments": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/journalSegment" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "prepared",
+                  "backup-verified",
+                  "main-replaced",
+                  "canonical-verified",
+                  "rollback-started"
+                ]
+              }
+            },
+            "required": ["status"]
+          },
+          "then": { "properties": { "recovery_result": { "type": "null" } } }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "aborted-before-mutation" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "recovery_result": {
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "allOf": [
+                      { "$ref": "#/$defs/recoveryResultEvidence" },
+                      {
+                        "properties": {
+                          "document": {
+                            "allOf": [
+                              { "$ref": "#/$defs/recoveryResultDocument" },
+                              { "properties": { "status": { "const": "aborted-before-mutation" } } }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "restored" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "recovery_result": {
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "allOf": [
+                      { "$ref": "#/$defs/recoveryResultEvidence" },
+                      {
+                        "properties": {
+                          "document": {
+                            "allOf": [
+                              { "$ref": "#/$defs/recoveryResultDocument" },
+                              { "properties": { "status": { "const": "rolled-back" } } }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "recovery-required" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "recovery_result": {
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "allOf": [
+                      { "$ref": "#/$defs/recoveryResultEvidence" },
+                      {
+                        "properties": {
+                          "document": {
+                            "allOf": [
+                              { "$ref": "#/$defs/recoveryResultDocument" },
+                              { "properties": { "status": { "const": "failed" } } }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "started_at",
+        "completed_at",
+        "journal",
+        "canonical_before",
+        "canonical_after",
+        "canonical_before_sqlite",
+        "canonical_after_sqlite",
+        "main_replace_same_volume_atomic",
+        "multi_file_atomic_claim",
+        "rollback_required",
+        "error_code",
+        "error_message"
+      ],
+      "properties": {
+        "status": { "enum": ["journaled", "main-replaced", "verified", "failed"] },
+        "started_at": { "$ref": "#/$defs/utcTimestamp" },
+        "completed_at": { "$ref": "#/$defs/nullableTimestamp" },
+        "journal": { "$ref": "#/$defs/journalEvidence" },
+        "canonical_before": { "$ref": "#/$defs/checkpointedDatabaseSet" },
+        "canonical_after": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/checkpointedDatabaseSet" }
+          ]
+        },
+        "canonical_before_sqlite": { "$ref": "#/$defs/sqliteIdentity" },
+        "canonical_after_sqlite": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/schema4SqliteIdentity" }
+          ]
+        },
+        "main_replace_same_volume_atomic": { "type": "boolean" },
+        "multi_file_atomic_claim": { "const": false },
+        "rollback_required": { "type": "boolean" },
+        "error_code": { "type": ["string", "null"], "minLength": 1 },
+        "error_message": { "type": ["string", "null"], "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "failed" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "error_code": { "type": "string", "minLength": 1 },
+              "error_message": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
+    },
+    "successfulActivation": {
+      "allOf": [
+        { "$ref": "#/$defs/activation" },
+        {
+          "properties": {
+            "status": { "const": "verified" },
+            "completed_at": { "$ref": "#/$defs/utcTimestamp" },
+            "journal": {
+              "allOf": [
+                { "$ref": "#/$defs/journalEvidence" },
+                { "properties": { "status": { "const": "canonical-verified" } } }
+              ]
+            },
+            "canonical_after": { "$ref": "#/$defs/closedDatabaseSet" },
+            "canonical_after_sqlite": { "$ref": "#/$defs/schema4SqliteIdentity" },
+            "main_replace_same_volume_atomic": { "const": true },
+            "rollback_required": { "const": false },
+            "error_code": { "type": "null" },
+            "error_message": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "failedActivation": {
+      "allOf": [
+        { "$ref": "#/$defs/activation" },
+        {
+          "properties": {
+            "status": { "const": "failed" },
+            "completed_at": { "$ref": "#/$defs/utcTimestamp" },
+            "journal": {
+              "allOf": [
+                { "$ref": "#/$defs/journalEvidence" },
+                { "properties": { "status": { "const": "recovery-required" } } }
+              ]
+            },
+            "rollback_required": { "const": true },
+            "error_code": { "type": "string", "minLength": 1 },
+            "error_message": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "publishedRecoveryActivation": {
+      "allOf": [
+        { "$ref": "#/$defs/activation" },
+        {
+          "properties": {
+            "status": { "const": "verified" },
+            "completed_at": { "$ref": "#/$defs/utcTimestamp" },
+            "journal": {
+              "allOf": [
+                { "$ref": "#/$defs/journalEvidence" },
+                { "properties": { "status": { "const": "recovery-required" } } }
+              ]
+            },
+            "canonical_after": { "$ref": "#/$defs/closedDatabaseSet" },
+            "canonical_after_sqlite": { "$ref": "#/$defs/schema4SqliteIdentity" },
+            "main_replace_same_volume_atomic": { "const": true },
+            "rollback_required": { "const": true },
+            "error_code": { "type": "null" },
+            "error_message": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "rolledBackActivation": {
+      "allOf": [
+        { "$ref": "#/$defs/activation" },
+        {
+          "properties": {
+            "status": { "enum": ["verified", "failed"] },
+            "completed_at": { "$ref": "#/$defs/utcTimestamp" },
+            "journal": {
+              "allOf": [
+                { "$ref": "#/$defs/journalEvidence" },
+                { "properties": { "status": { "const": "restored" } } }
+              ]
+            },
+            "main_replace_same_volume_atomic": { "const": true },
+            "rollback_required": { "const": true }
+          }
+        }
+      ]
+    },
+    "postPublish": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verified_at",
+        "canonical_database_sha256",
+        "candidate_database_sha256",
+        "bytes_match_candidate",
+        "canonical_sqlite",
+        "verification"
+      ],
+      "properties": {
+        "verified_at": { "$ref": "#/$defs/utcTimestamp" },
+        "canonical_database_sha256": { "$ref": "#/$defs/sha256" },
+        "candidate_database_sha256": { "$ref": "#/$defs/sha256" },
+        "bytes_match_candidate": { "const": true },
+        "canonical_sqlite": { "$ref": "#/$defs/schema4SqliteIdentity" },
+        "verification": {
+          "allOf": [
+            { "$ref": "#/$defs/successfulVerification" },
+            { "properties": { "verified_under_hold": { "const": true } } }
+          ]
+        }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempted_at",
+        "completed_at",
+        "trigger",
+        "succeeded",
+        "restored_database",
+        "restored_sqlite",
+        "restored_sha256_matches_backup",
+        "hold_must_remain",
+        "listener_restore_required",
+        "error"
+      ],
+      "properties": {
+        "attempted_at": { "$ref": "#/$defs/utcTimestamp" },
+        "completed_at": { "$ref": "#/$defs/nullableTimestamp" },
+        "trigger": { "type": "string", "minLength": 1 },
+        "succeeded": { "type": "boolean" },
+        "restored_database": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/checkpointedDatabaseSet" }
+          ]
+        },
+        "restored_sqlite": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/sqliteIdentity" }
+          ]
+        },
+        "restored_sha256_matches_backup": { "type": "boolean" },
+        "hold_must_remain": { "const": true },
+        "listener_restore_required": { "const": true },
+        "error": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "successfulRollback": {
+      "allOf": [
+        { "$ref": "#/$defs/rollback" },
+        {
+          "properties": {
+            "completed_at": { "$ref": "#/$defs/utcTimestamp" },
+            "succeeded": { "const": true },
+            "restored_database": { "$ref": "#/$defs/checkpointedDatabaseSet" },
+            "restored_sqlite": { "$ref": "#/$defs/sqliteIdentity" },
+            "restored_sha256_matches_backup": { "const": true },
+            "error": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "failedRollback": {
+      "allOf": [
+        { "$ref": "#/$defs/rollback" },
+        {
+          "properties": {
+            "completed_at": { "$ref": "#/$defs/utcTimestamp" },
+            "succeeded": { "const": false },
+            "restored_sha256_matches_backup": { "const": false },
+            "error": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "release_eligible", "listener_restore_required", "issue_taxonomy", "terminal_at", "error_code", "error_message"],
+      "properties": {
+        "status": { "enum": ["in-progress", "blocked", "succeeded", "failed", "rolled-back"] },
+        "release_eligible": { "type": "boolean" },
+        "listener_restore_required": { "type": "boolean" },
+        "issue_taxonomy": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/issueCount" }
+        },
+        "terminal_at": { "$ref": "#/$defs/nullableTimestamp" },
+        "error_code": { "type": ["string", "null"], "minLength": 1 },
+        "error_message": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "preCutoverResult": {
+      "oneOf": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/result" },
+            {
+              "properties": {
+                "status": { "const": "in-progress" },
+                "release_eligible": { "const": false },
+                "listener_restore_required": { "const": false },
+                "terminal_at": { "type": "null" },
+                "error_code": { "type": "null" },
+                "error_message": { "type": "null" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/result" },
+            {
+              "properties": {
+                "status": { "enum": ["blocked", "failed"] },
+                "release_eligible": { "const": false },
+                "listener_restore_required": { "const": false },
+                "terminal_at": { "$ref": "#/$defs/utcTimestamp" },
+                "error_code": { "type": "string", "minLength": 1 },
+                "error_message": { "type": "string", "minLength": 1 }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "readyResult": {
+      "allOf": [
+        { "$ref": "#/$defs/result" },
+        {
+          "properties": {
+            "status": { "const": "in-progress" },
+            "release_eligible": { "const": false },
+            "listener_restore_required": { "const": true },
+            "issue_taxonomy": { "type": "array", "maxItems": 0 },
+            "terminal_at": { "type": "null" },
+            "error_code": { "type": "null" },
+            "error_message": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "publishedResult": {
+      "allOf": [
+        { "$ref": "#/$defs/result" },
+        {
+          "properties": {
+            "status": { "const": "succeeded" },
+            "release_eligible": { "const": true },
+            "listener_restore_required": { "const": false },
+            "issue_taxonomy": { "type": "array", "maxItems": 0 },
+            "terminal_at": { "$ref": "#/$defs/utcTimestamp" },
+            "error_code": { "type": "null" },
+            "error_message": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "failedRecoveryResult": {
+      "allOf": [
+        { "$ref": "#/$defs/result" },
+        {
+          "properties": {
+            "status": { "const": "failed" },
+            "release_eligible": { "const": false },
+            "listener_restore_required": { "const": true },
+            "terminal_at": { "$ref": "#/$defs/utcTimestamp" },
+            "error_code": { "type": "string", "minLength": 1 },
+            "error_message": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "rolledBackResult": {
+      "allOf": [
+        { "$ref": "#/$defs/result" },
+        {
+          "properties": {
+            "status": { "const": "rolled-back" },
+            "release_eligible": { "const": false },
+            "listener_restore_required": { "const": true },
+            "terminal_at": { "$ref": "#/$defs/utcTimestamp" }
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "error_code": { "type": "null" },
+                "error_message": { "type": "null" }
+              }
+            },
+            {
+              "properties": {
+                "error_code": { "type": "string", "minLength": 1 },
+                "error_message": { "type": "string", "minLength": 1 }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
