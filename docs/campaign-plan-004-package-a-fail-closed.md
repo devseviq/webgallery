@@ -3,7 +3,7 @@
 **Plan ID:** plan-004
 **Date:** 2026-07-21
 **Task-manager status:** executed (agent tasks registered; this is not operational publication evidence)
-**Operational status:** planned; implementation, repository verification, publication, and cutover are incomplete
+**Operational status:** repository-verified implementation only; fresh candidate build and verification, publication, and cutover are incomplete
 **Plan file:** data/plans/plan-004.json
 **Plan doc:** docs/campaign-plan-004-package-a-fail-closed.md
 **Planner kind:** planner-refactor

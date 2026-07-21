@@ -21,6 +21,14 @@ import sys
 # from creating package caches as well.
 sys.dont_write_bytecode = True
 
+# This is a repository entry point, so its imports must resolve beside this
+# script even when the invoking account has another ``dl_engine`` checkout on
+# PYTHONPATH or installed in a user site.  The PowerShell wrapper independently
+# verifies the resolved module origin before any write-capable invocation.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SOURCE_ROOT))
+
 from dl_engine import gallery_publication as publication  # noqa: E402
 from dl_engine import index_library  # noqa: E402
 

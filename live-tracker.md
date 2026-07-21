@@ -2,10 +2,46 @@
 
 This table records completed or active campaign work registered through the project task manager.
 
-**Current operational state (verified 2026-07-16):** The bulk-sort batch is
-complete and the rebuilt canonical library verifies cleanly. Maintenance is
-`degraded` only for one stale 5,406,736-byte `.part`; there is no remaining
-eligible sorter work.
+**Historical operational snapshot (verified 2026-07-16; not refreshed in this
+docs pass):** The bulk-sort batch was complete and the rebuilt canonical
+library verified cleanly. Maintenance was `degraded` only for one stale
+5,406,736-byte `.part`; there was no remaining eligible sorter work. Recheck
+before treating any queue, task, process, listener, database, or maintenance
+claim as current.
+
+## Plan 004 publication evidence
+
+The Plan 004 implementation is merged and `repository-verified`: Python
+compilation, the 148-test targeted gate (plus 125 subtests), the 252-test full
+gate (plus 186 subtests), PowerShell parser/help checks, plan validation, and
+diff checks all passed. This documentation reconciliation ran no live
+candidate, browser, publication, cutover, recovery, queue, task, process,
+listener, or canonical-database probe or mutation.
+
+| Surface | Status | Evidence / next gate |
+|---|---|---|
+| Repository | `repository-verified` | Publication core, Python CLI, and SND-HOST wrapper are merged; compile, targeted/full tests, parser/help, plan validation, and diff checks passed. |
+| Candidate | `candidate-blocked` (retained diagnostic only) | `F:\Wallpapers\webgallery_library.schema4.20260721T003322Z.candidate.sqlite` (SHA-256 `F138D243A8A7DD2BE4164CAB3461D27517699C82EDEEA6829A429A7DA211B5D3`) failed its dated exhaustive run with exactly 200 `layout-mismatch` issues. `F:\Wallpapers\reports\maintenance-webgallery-candidate-20260721T003322Z\verify.json` (SHA-256 `0E02210EB48A4B406286FE90BA9499AC677F95A68C3BE27948F0EC1BA477E896`) lacked the required generated timestamp and no Plan 004 manifest binds either artifact. Build a fresh unique candidate after repository verification. |
+| Browser | Not run post-merge | The bounded 2026-07-21 candidate diagnostic observed HTTP/privacy/history, 320/390/768 responsive behavior, opt-in original, dialog, focus return, and no collected console errors while verification correctly remained false. Zoom, reduced motion, stale-load handling, and the rest of the promotion matrix were not run. This evidence is stale and non-promotional; the full isolated browser matrix remains required after a fresh zero-issue candidate report. |
+| Publication | Not run | No `ready-to-publish` or `published` state, hashed backup, activation journal, or canonical post-publication report is claimed. |
+| Cutover | Not run | No `cut-over` state is claimed. The publisher never stops/starts 8090. |
+| Recovery | Not run | No `rolled-back` state is claimed. Recover requires an identified manifest/backup/journal and a current external recovery hold. |
+| External/live state | Not refreshed | The WPL handoff recorded a schema-3 canonical SHA-256 `1AE393A92BE5DA25168D2F57C292B89B04EFD34B37B09B6BC34C4681AF2F6402`, legacy 8090 PID 39260, free 8091, and orphan downloader descendants. Those are dated, stale diagnostics, not current state. No canonical, queue, task, process, or listener bytes/state changed in this docs pass. |
+
+The operator authority is
+[`docs/GALLERY_INDEX_PUBLICATION.md`](docs/GALLERY_INDEX_PUBLICATION.md), the
+strict manifest is
+[`schemas/gallery-publication-manifest.schema.json`](schemas/gallery-publication-manifest.schema.json),
+and literal-path `Inspect -WhatIf`, `Prepare -Apply`, Python `validate`,
+`Publish -Apply -CutoverAuthorized`, and `Recover -Apply` commands are in
+[`docs/INDEX_LIBRARY.md`](docs/INDEX_LIBRARY.md#plan-004-operator-workflow).
+Candidates, manifests, backups, journals, and recovery results live under
+`F:\Wallpapers\.wallpaper-library-maintenance\gallery-publication`; immutable
+per-attempt reports live under `F:\Wallpapers\reports\gallery-publication`.
+
+The campaign rows below preserve historical results. Plan 003 runtime/PID
+language refers to its 2026-07-20 observation and is stale for Plan 004; no row
+implicitly refreshes live state.
 
 | ID | Status | Owner | Scope | Issue | Update |
 |---|---|---|---|---|---|
@@ -20,3 +56,4 @@ eligible sorter work.
 | WP-GALLERY-INDEX-001 | Implemented | agent-wpe | schema 3, materialized facets/ratings, batched tags, discovery API, provider ledger, suggestion layer | Make gallery queries fast and metadata richer without losing provenance | Schema-3 API and temp-database tests cover materialized ratings/facets, constant-shape page hydration, seeded sorts, counted typed autocomplete, path-free ID/SHA media URLs, provider coverage, and review-only visual suggestions. An earlier aggregate copy-migration check preserved 85,509 image rows, 29,716 tags, and 466,715 associations and returned `ok=true` with zero verifier issues without publishing. After verified SND-HOST identity on 2026-07-20, the separately owned `F:\Wallpapers\webgallery_library.sqlite` was published as schema 3 with those counts; exhaustive verification against `F:\Wallpapers\library` returned `ok=true` with zero issues in `F:\Wallpapers\reports\maintenance-webgallery-20260720T145433Z\verify.json`. The sibling-owned `F:\Wallpapers\wallpaper_library.sqlite` remains schema 2. Warm 48-item API requests averaged about 56.05 ms; the path-free JSON response was 84,316 bytes. The 2026-07-20T02:40:25Z refresh still found 11,923 Wallhaven-pending rows and 28,310 Zerochan rows averaging 1.000 tags. No provider import or Wallhaven canary ran; the active queue still blocks the authorized bounded canary. |
 | WP-GALLERY-UI-001 | Implemented | agent-wpf | clickable typed metadata, counted autocomplete, lightbox, density/fit, URL presets, seeded shuffle, suggestion review UI | Turn indexed metadata into a lightweight discovery workflow | Cards now use thumbnails only; exact provider tags navigate; the ARIA combobox shows typed counts; URL presets, positive shuffle seed, density/fit, active chips, accessible detail navigation, and identity-guarded review-only suggestion decisions preserve rating, reveal, infinite-scroll, selection, missing-path, and transfer workflows. The canonical Git-blob SHA-256 for `reports/library-browser.html` changed from `6D81B89F546B03286422A5DABEAB1CE14EB783C21BA85B7C54CFC18A9DB5B5BB` at `fdbae4d` to `CF00AA359ED802D098F0069C3398B6CE516B47F256BCF50B51B703FBDD455346` at `d7fa9a7`; this avoids checkout-dependent CRLF hashes. The earlier disposable 64-image smoke passed and was removed. The 2026-07-20 live-root browser smoke passed counted autocomplete ArrowUp/ArrowDown wrap, all six presets with query reload, 96 unique seeded-shuffle cards without page overlap, dialog focus/arrows/Escape and focus return, density/fit changes, NSFW blur/reveal, one selected item with Send enabled but never clicked, and a 390×844 viewport without horizontal overflow; it reported zero browser errors. The smoke exposed and drove fixes for reload/query and initial-ArrowUp blockers, a post-dialog rating-tab selector crash, and the valid JPEG/MPO thumbnail case. The full suite now passes 196 tests plus 61 subtests on Python 3.14.6. No transfer or suggestion review was submitted. Campaign status remains Implemented because the queue-blocked provider canary, deliberate cutover, and live review canary remain outstanding as recorded in `docs/GALLERY_ROADMAP.md`. |
 | WP-GALLERY-HARDEN-003 | Implemented; browser gate blocked | agent-wpi | schema-4 NSFW subcategories and snapshot reads; accessible/history-safe/opt-in-original UI; interruption cleanup | Harden Plan 002 contracts without mutating live assets or promotion state | Direct schema migration/rollback/drift/facet/suggestion, WAL snapshot, response-schema/server, browser-contract, and cancellation regressions pass. Python 3.14.6 results are 14 thumbnail tests plus 11 subtests, 192 focused tests plus 65 subtests, and 217 full-suite tests plus 65 subtests; compile and `git diff --check` pass. The removed temporary schema-4 HTTP fixture returned 200 for the 90,085-byte gallery, explicit/legacy/facet APIs, a 440-byte WebP, a 7,240-byte explicit original, and disabled transfer status; the invalid combination returned 400 and six sensitive paths returned 404. After fresh VERIFIED `snd-host` identity, Chrome loaded the exact explicit-root 8091 page but the required `F:\Wallpapers\webgallery_library.sqlite` remains schema 3, so status/page APIs returned 503/400 with zero cards; WPI did not migrate it and does not claim the keyboard/history/original/viewport/zoom browser matrix. PIDs 4060/41964 were stopped, 8091 was released, and legacy 8090 PID 39260 was untouched. Recovery stash `2cdda350b87af5e5aec9a19a2ccc422e56a72c12` remains evidence only. Schema-4 publication plus browser rerun, provider/review canaries, 8090 cutover, and promotion verification remain incomplete; typed multi-tag identity, durable suggestion replay, materialized provider coverage, cursor/bounded-DOM pagination, multi-provenance evidence, and a retained browser-automation choice are follow-on campaigns. |
+| WP-GALLERY-PUBLISH-004 | repository-verified | agent-wpk / agent-wpl | fail-closed schema-4 candidate, manifest, verification, publication, backup/journal recovery, and operator documentation | Package schema 4 without conflating repository delivery, publication, or listener cutover | Publication implementation is merged. Compile, 148 tests plus 125 subtests targeted, 252 tests plus 186 subtests full, PowerShell parser/help, plan validation, and diff checks passed. The wrapper is WhatIf-first, pins exact SND-HOST paths, protects `F:\Wallpapers\wallpaper_library.sqlite`, and keeps queue-hold and listener ownership external. No new live candidate/browser/publication/cutover/recovery or live-state inventory ran for this update. The retained 2026-07-21 candidate/report are `candidate-blocked` diagnostics, not manifest-bound inputs. Backup means the hashed exact pre-activation canonical DB set; reports are immutable per-attempt evidence; the manifest is the state authority. |
