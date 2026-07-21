@@ -5284,7 +5284,10 @@ def parse_journal_chain(
         segment_end_sequences=segment_end_sequences,
     )
     derived_status = derive_journal_status(records)
-    if segments and not segments[-1].get("records"):
+    if segments and (
+        not segments[-1].get("records")
+        or segments[-1].get("torn_final_record") is True
+    ):
         derived_status = "recovery-required"
     return JournalChain(
         transaction_id,

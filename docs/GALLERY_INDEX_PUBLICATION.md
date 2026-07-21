@@ -769,7 +769,7 @@ or new cutover authorization:
 
 ```powershell
 & $wrapper -Mode Recover -Apply `
-  -CanonicalDatabase $canonical `
+  -CanonicalDatabase $canonical -ManifestPath $manifest `
   -BackupDirectory $backupDirectory -RecoveryJournal $journal `
   -RecoveryResultRoot $recoveryResultRoot `
   -QueueStatePath $queueState -HoldPath $holdPath
