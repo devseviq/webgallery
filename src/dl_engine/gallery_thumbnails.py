@@ -189,34 +189,29 @@ def ensure_thumbnail(
             f".{final_path.name}.{uuid4().hex}.tmp"
         )
         try:
-            with _generation_slots:
-                _generate_thumbnail(source, temporary, spec)
-            temporary.replace(final_path)
-        except ThumbnailError:
+            try:
+                with _generation_slots:
+                    _generate_thumbnail(source, temporary, spec)
+                temporary.replace(final_path)
+            except ThumbnailError:
+                raise
+            except (
+                Image.DecompressionBombError,
+                Image.DecompressionBombWarning,
+                UnidentifiedImageError,
+                OSError,
+                SyntaxError,
+                ValueError,
+            ) as exc:
+                raise ThumbnailError("thumbnail generation failed") from exc
+            except Exception as exc:
+                raise ThumbnailError("thumbnail encoder failed") from exc
+        except BaseException:
             try:
                 temporary.unlink(missing_ok=True)
             except OSError:
                 pass
             raise
-        except (
-            Image.DecompressionBombError,
-            Image.DecompressionBombWarning,
-            UnidentifiedImageError,
-            OSError,
-            SyntaxError,
-            ValueError,
-        ) as exc:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise ThumbnailError("thumbnail generation failed") from exc
-        except Exception as exc:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise ThumbnailError("thumbnail encoder failed") from exc
 
         if not _valid_cache_hit(final_path):
             raise ThumbnailError("thumbnail generation produced no cache artifact")

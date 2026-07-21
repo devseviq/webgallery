@@ -396,6 +396,43 @@ def _create_schema2_fixture(db: Path) -> None:
     conn.close()
 
 
+def _create_schema3_fixture(db: Path) -> None:
+    """Create the previous rebuildable gallery schema without v4 fields."""
+
+    _create_schema2_fixture(db)
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        ALTER TABLE images ADD COLUMN content_rating TEXT NOT NULL DEFAULT 'unknown'
+            CHECK(content_rating IN ('sfw','suggestive','nsfw','unknown'));
+        ALTER TABLE images ADD COLUMN rating_confidence REAL NOT NULL DEFAULT 0
+            CHECK(rating_confidence >= 0 AND rating_confidence <= 1);
+        ALTER TABLE images ADD COLUMN rating_basis TEXT NOT NULL DEFAULT 'no-signal';
+        ALTER TABLE images ADD COLUMN rating_reasons_json TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE images ADD COLUMN tag_count INTEGER NOT NULL DEFAULT 0
+            CHECK(tag_count >= 0);
+        CREATE TABLE library_facets (
+            facet TEXT NOT NULL, value TEXT NOT NULL, count INTEGER NOT NULL,
+            refreshed_at TEXT NOT NULL, PRIMARY KEY(facet,value)
+        );
+        CREATE TABLE tag_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+            label TEXT NOT NULL, normalized_label TEXT NOT NULL,
+            confidence REAL NOT NULL, generator TEXT NOT NULL,
+            model_version TEXT NOT NULL, provenance TEXT NOT NULL,
+            review_status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL,
+            reviewed_at TEXT, reviewer TEXT, decision_note TEXT,
+            UNIQUE(image_id,normalized_label,generator,model_version)
+        );
+        UPDATE schema_metadata SET value='3' WHERE key='schema_version';
+        PRAGMA user_version=3;
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
 def _wallhaven_ledger_record(
     source_id: str,
     *,
@@ -1361,7 +1398,7 @@ class SchemaMigrationTests(unittest.TestCase):
                     tag["id"],
                     idx._stable_tag_id("anime-pictures", "Azur Lane", "unknown"),
                 )
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 4)
             finally:
                 conn.close()
 
@@ -1883,13 +1920,58 @@ class QueryTests(unittest.TestCase):
         self.assertEqual(parsed["tag"], "long hair")
         self.assertEqual(parsed["limit"], "25")
 
+    def test_query_filters_and_validates_nsfw_subcategory(self) -> None:
+        image_id = int(
+            self.conn.execute("SELECT id FROM images ORDER BY id LIMIT 1").fetchone()[0]
+        )
+        self.conn.execute(
+            "UPDATE images SET content_rating='nsfw', "
+            "nsfw_subcategory='explicit' WHERE id=?",
+            (image_id,),
+        )
+        rows = idx.query(
+            self.conn,
+            content_rating="NSFW",
+            nsfw_subcategory="EXPLICIT",
+        )
+        self.assertEqual([row.id for row in rows], [image_id])
+        with self.assertRaisesRegex(ValueError, "requires content_rating"):
+            idx.query(self.conn, nsfw_subcategory="explicit")
+        with self.assertRaisesRegex(ValueError, "requires content_rating"):
+            idx.query(
+                self.conn,
+                content_rating="sfw",
+                nsfw_subcategory="explicit",
+            )
+        with self.assertRaisesRegex(ValueError, "nsfw_subcategory"):
+            idx.query(
+                self.conn,
+                content_rating="nsfw",
+                nsfw_subcategory="other",
+            )
+
+    def test_cli_forwards_nsfw_subcategory(self) -> None:
+        db_path = Path(self._tmp.name) / "index.sqlite"
+        with mock.patch.object(idx, "query", return_value=[]) as query:
+            result = idx.main(
+                [
+                    "--db-path",
+                    str(db_path),
+                    "--query",
+                    "rating=nsfw nsfw_subcategory=fetish",
+                ]
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(query.call_args.kwargs["content_rating"], "nsfw")
+        self.assertEqual(query.call_args.kwargs["nsfw_subcategory"], "fetish")
+
 
 # ---------------------------------------------------------------------------
 # Orientation reorg plan (Phase 3 — read-only manifest emit)
 # ---------------------------------------------------------------------------
 
 
-class SchemaV3ContractTests(unittest.TestCase):
+class SchemaV4ContractTests(unittest.TestCase):
     def test_true_schema2_migration_backfills_and_preserves_evidence(self) -> None:
         import tempfile
 
@@ -1898,11 +1980,11 @@ class SchemaV3ContractTests(unittest.TestCase):
             _create_schema2_fixture(db)
             conn = idx.connect(db)
             try:
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 4)
                 self.assertTrue(
                     {
                         "content_rating", "rating_confidence", "rating_basis",
-                        "rating_reasons_json", "tag_count",
+                        "rating_reasons_json", "nsfw_subcategory", "tag_count",
                     }.issubset(idx._table_columns(conn, "images"))
                 )
                 tables = {
@@ -1912,7 +1994,13 @@ class SchemaV3ContractTests(unittest.TestCase):
                 }
                 self.assertTrue({"library_facets", "tag_suggestions"}.issubset(tables))
                 row = conn.execute("SELECT * FROM images").fetchone()
-                self.assertEqual((row["content_rating"], row["tag_count"]), ("nsfw", 1))
+                self.assertEqual(
+                    (
+                        row["content_rating"], row["nsfw_subcategory"],
+                        row["tag_count"],
+                    ),
+                    ("nsfw", "explicit", 1),
+                )
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0], 1)
                 self.assertEqual(
                     conn.execute(
@@ -1983,6 +2071,7 @@ class SchemaV3ContractTests(unittest.TestCase):
             row = conn.execute("SELECT * FROM images WHERE id=?", (image_id,)).fetchone()
             self.assertEqual(result.images, 1)
             self.assertEqual(row["content_rating"], "nsfw")
+            self.assertEqual(row["nsfw_subcategory"], "explicit")
             self.assertEqual(row["rating_basis"], "explicit-tag")
             self.assertEqual(json.loads(row["rating_reasons_json"]), ["hentai"])
             self.assertEqual(row["tag_count"], 1)
@@ -1991,7 +2080,7 @@ class SchemaV3ContractTests(unittest.TestCase):
 
             reopened = idx.connect(db)
             try:
-                self.assertEqual(reopened.execute("PRAGMA user_version").fetchone()[0], 3)
+                self.assertEqual(reopened.execute("PRAGMA user_version").fetchone()[0], 4)
                 self.assertEqual(
                     reopened.execute("SELECT COUNT(*) FROM tags").fetchone()[0], 1,
                 )
@@ -1999,7 +2088,7 @@ class SchemaV3ContractTests(unittest.TestCase):
                     reopened.execute(
                         "SELECT value FROM schema_metadata WHERE key='schema_version'"
                     ).fetchone()[0],
-                    "3",
+                    "4",
                 )
             finally:
                 reopened.close()
@@ -2009,7 +2098,7 @@ class SchemaV3ContractTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             for name, user_version, metadata_version in (
-                ("mismatch", 0, 2), ("future", 4, 4),
+                ("mismatch", 0, 2), ("future", 5, 5),
             ):
                 db = Path(tmp) / f"{name}.sqlite"
                 conn = sqlite3.connect(db)
@@ -2025,6 +2114,203 @@ class SchemaV3ContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "schema"):
                     idx.connect(db)
                 self.assertEqual(db.read_bytes(), before)
+
+    def test_new_schema_enforces_subcategory_domain_invariant_and_index(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = idx.connect(Path(tmp) / "index.sqlite")
+            try:
+                self.assertIn(
+                    "nsfw_subcategory", idx._table_columns(conn, "images")
+                )
+                index_columns = [
+                    row[2]
+                    for row in conn.execute(
+                        "PRAGMA index_info(idx_images_nsfw_subcategory)"
+                    )
+                ]
+                self.assertEqual(
+                    index_columns, ["content_rating", "nsfw_subcategory", "id"]
+                )
+                image_id = _insert_minimal_image(conn, 1, purity="sfw")
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "UPDATE images SET nsfw_subcategory='explicit' WHERE id=?",
+                        (image_id,),
+                    )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "UPDATE images SET content_rating='nsfw', "
+                        "nsfw_subcategory='invalid' WHERE id=?",
+                        (image_id,),
+                    )
+            finally:
+                conn.close()
+
+    def test_schema3_migration_backfills_subcategory_and_publishes_last(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "v3.sqlite"
+            _create_schema3_fixture(db)
+            conn = idx.connect(db)
+            try:
+                row = conn.execute("SELECT * FROM images").fetchone()
+                self.assertEqual(
+                    (row["content_rating"], row["nsfw_subcategory"]),
+                    ("nsfw", "explicit"),
+                )
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 4)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT value FROM schema_metadata "
+                        "WHERE key='schema_version'"
+                    ).fetchone()[0],
+                    "4",
+                )
+                self.assertIn(
+                    "idx_images_nsfw_subcategory",
+                    {
+                        row[1]
+                        for row in conn.execute("PRAGMA index_list(images)")
+                    },
+                )
+                trigger_names = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='trigger'"
+                    )
+                }
+                self.assertTrue(
+                    {
+                        "trg_images_nsfw_subcategory_insert",
+                        "trg_images_nsfw_subcategory_update",
+                    }.issubset(trigger_names)
+                )
+                with self.assertRaisesRegex(
+                    sqlite3.IntegrityError, "non-NSFW images require"
+                ):
+                    conn.execute(
+                        "UPDATE images SET content_rating='sfw', "
+                        "nsfw_subcategory='explicit' WHERE id=?",
+                        (row["id"],),
+                    )
+            finally:
+                conn.close()
+
+    def test_schema3_migration_rolls_back_subcategory_and_version(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "v3.sqlite"
+            _create_schema3_fixture(db)
+            with mock.patch.object(
+                idx, "refresh_derived_metadata", side_effect=RuntimeError("injected")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "injected"):
+                    idx.connect(db)
+            conn = sqlite3.connect(db)
+            try:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT value FROM schema_metadata "
+                        "WHERE key='schema_version'"
+                    ).fetchone()[0],
+                    "3",
+                )
+                self.assertNotIn(
+                    "nsfw_subcategory",
+                    {row[1] for row in conn.execute("PRAGMA table_info(images)")},
+                )
+                self.assertNotIn(
+                    "idx_images_nsfw_subcategory",
+                    {row[1] for row in conn.execute("PRAGMA index_list(images)")},
+                )
+                self.assertFalse(
+                    conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='trigger' "
+                        "AND name LIKE 'trg_images_nsfw_subcategory_%'"
+                    ).fetchall()
+                )
+            finally:
+                conn.close()
+
+    def test_refresh_uses_authoritative_tags_and_nsfw_only_facets(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = idx.connect(Path(tmp) / "index.sqlite")
+            cases = (
+                (1, "nude", "nudity"),
+                (2, "bondage", "fetish"),
+                (3, "oral sex", "explicit"),
+            )
+            for number, tag, _expected in cases:
+                image_id = _insert_minimal_image(conn, number, purity="nsfw")
+                idx._replace_image_tags(
+                    conn,
+                    image_id,
+                    "zerochan",
+                    [{"name": tag, "type": "rating", "provenance": "fixture"}],
+                )
+            purity_only_id = _insert_minimal_image(conn, 4, purity="nsfw")
+            suggestion_only_id = _insert_minimal_image(conn, 5)
+            idx.upsert_tag_suggestion(
+                conn,
+                image_id=suggestion_only_id,
+                label="oral sex",
+                confidence=0.99,
+                generator="fixture",
+                model_version="1",
+                provenance="synthetic",
+            )
+            idx.refresh_derived_metadata(conn)
+            rows = {
+                int(row["id"]): (row["content_rating"], row["nsfw_subcategory"])
+                for row in conn.execute(
+                    "SELECT id,content_rating,nsfw_subcategory FROM images"
+                )
+            }
+            self.assertEqual(
+                [rows[number][1] for number in sorted(rows)[:3]],
+                [expected for _number, _tag, expected in cases],
+            )
+            self.assertEqual(rows[purity_only_id], ("nsfw", "unspecified"))
+            self.assertEqual(rows[suggestion_only_id], ("unknown", "unspecified"))
+            facet = {
+                item.value: item.count
+                for item in idx.read_library_facets(conn)["nsfw_subcategory"]
+            }
+            self.assertEqual(
+                facet,
+                {"nudity": 1, "fetish": 1, "explicit": 1, "unspecified": 1},
+            )
+            conn.close()
+
+    def test_verifier_detects_subcategory_field_and_facet_drift(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root, db, _image, _sidecar = _create_verified_fixture(Path(tmp))
+            conn = sqlite3.connect(db)
+            try:
+                conn.execute(
+                    "UPDATE images SET content_rating='nsfw', "
+                    "nsfw_subcategory='fetish'"
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO library_facets "
+                    "VALUES ('nsfw_subcategory','fetish',1,'drift')"
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            report = idx.verify_library(db, root)
+            self.assertGreater(report["counts"]["derived_metadata_failures"], 0)
+            self.assertGreater(report["counts"]["facet_failures"], 0)
+            self.assertIn("nsfw_subcategory", json.dumps(report["issues"]))
 
 
 class DiscoveryQueryContractTests(unittest.TestCase):

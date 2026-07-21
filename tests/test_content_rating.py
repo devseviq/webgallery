@@ -52,6 +52,66 @@ class ContentRatingTests(unittest.TestCase):
             conn.close()
         self.assertEqual(value, "nsfw")
 
+    def test_nsfw_subcategory_list_and_generator_are_identical(self) -> None:
+        tags = [{"name": "nude"}, {"name": "bondage"}]
+        expected = rating.classify_nsfw_subcategory("nsfw", tags)
+        actual = rating.classify_nsfw_subcategory(
+            "nsfw", (tag for tag in tags)
+        )
+        self.assertEqual((expected, actual), ("fetish", "fetish"))
+
+    def test_nsfw_subcategory_precedence_is_explicit_fetish_nudity(self) -> None:
+        self.assertEqual(
+            rating.classify_nsfw_subcategory(
+                "nsfw", ["nude", "bondage", "oral sex"]
+            ),
+            "explicit",
+        )
+        self.assertEqual(
+            rating.classify_nsfw_subcategory("nsfw", ["nude", "bondage"]),
+            "fetish",
+        )
+        self.assertEqual(
+            rating.classify_nsfw_subcategory("nsfw", ["nude"]),
+            "nudity",
+        )
+
+    def test_nsfw_subcategory_purity_only_uses_unspecified(self) -> None:
+        self.assertEqual(
+            rating.classify_nsfw_subcategory("NSFW", ["landscape"]),
+            "unspecified",
+        )
+
+    def test_subcategory_terms_do_not_elevate_non_nsfw_rating(self) -> None:
+        self.assertEqual(rating.classify_content("sfw", ["feet"]).rating, "sfw")
+        self.assertEqual(
+            rating.classify_nsfw_subcategory("sfw", ["feet"]),
+            "unspecified",
+        )
+
+    def test_nsfw_subcategory_normalizes_provider_labels(self) -> None:
+        self.assertEqual(
+            rating.classify_nsfw_subcategory(
+                "nsfw", [{"name": "  ORAL-SEX!!  "}]
+            ),
+            "explicit",
+        )
+
+    def test_nsfw_subcategory_sqlite_scalar_matches_python(self) -> None:
+        tags = ["nude", "bondage", "oral sex"]
+        conn = sqlite3.connect(":memory:")
+        try:
+            rating.register_sqlite_function(conn)
+            actual = conn.execute(
+                "SELECT wallpaper_nsfw_subcategory(?, ?)",
+                ("nsfw", rating.TAG_SEPARATOR.join(tags)),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(
+            actual, rating.classify_nsfw_subcategory("nsfw", tags)
+        )
+
 
 class ContentRatingQueryTests(unittest.TestCase):
     def setUp(self) -> None:

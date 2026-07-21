@@ -47,6 +47,13 @@ CSVs, environment/config files, queue state, SQLite files, backups, sidecars,
 archives, or arbitrary report/collection paths. Encoded traversal and
 filesystem/reparse-point escapes are rejected.
 
+The library response schema is version 3. Each item includes the materialized
+`nsfw_subcategory`; filters echo the optional value, and facets always return
+`nudity`, `explicit`, `fetish`, and `unspecified` keys (including zero counts).
+`GET /api/library` allowlists `nsfw_subcategory`, but rejects it unless
+`rating=nsfw`. Count, image rows, authoritative tags, and suggestions are read
+inside one explicit SQLite snapshot.
+
 ## Sanitized operations status
 
 The live dashboard polls `/api/operations/status`; it never fetches the queue
@@ -125,7 +132,7 @@ named explicitly:
 `F:\Wallpapers\wallpaper_library.sqlite` is not the gallery database. It is a
 schema-2 index owned by the sibling `F:\Wallpapers\dl-engine` scheduled
 maintenance path. The allowlisted gallery must use the separately owned
-schema-3 `F:\Wallpapers\webgallery_library.sqlite`; see
+schema-4 `F:\Wallpapers\webgallery_library.sqlite`; see
 `docs/INDEX_LIBRARY.md` for its rebuild and verification gate.
 
 ```powershell
@@ -152,9 +159,9 @@ $python = "$repo\.venv\Scripts\python.exe"
 The server uses a reusable `ThreadingHTTPServer` with daemon request threads so
 one image or thumbnail response does not serialize unrelated API requests.
 Port 8091 is the alternate-listener smoke target and does not replace the
-existing listener. Stop it with Ctrl+C in its owning console. A deliberate
-cutover to port 8090 requires stopping the old listener first; never run two
-listeners on the same port.
+existing listener. Stop it with Ctrl+C in its owning console. Any deliberate
+cutover requires stopping the old listener first; never run two listeners on
+the same port.
 
 ## Snapshot generation and watcher
 
@@ -215,5 +222,5 @@ publishing the new PID; stale PID files are removed safely.
 
 The server does not migrate its configured database or alter canonical media.
 Live cutover, live cache generation, listener restart, and live HTTP
-verification remain gated until the separate schema-3 gallery database has
+verification remain gated until the separate schema-4 gallery database has
 been published and verified.

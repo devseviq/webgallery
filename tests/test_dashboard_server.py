@@ -398,6 +398,7 @@ class DashboardServerTests(unittest.TestCase):
             "GET", "/api/library?limit=20"
         )
         self.assertEqual(status, 200)
+        self.assertEqual(payload["schema_version"], 3)
         self.assertNotIn("path", payload["index"])
         items = {item["id"]: item for item in payload["items"]}
         canonical = items[self.image_id]
@@ -407,7 +408,22 @@ class DashboardServerTests(unittest.TestCase):
         self.assertEqual(canonical["thumbnail_url"], f"/thumb/{self.sha}.webp")
         self.assertIsNone(items[self.outside_id]["url"])
         self.assertIsNone(items[self.missing_id]["url"])
+        self.assertTrue(
+            all(item["nsfw_subcategory"] == "unspecified" for item in items.values())
+        )
         self.assertNotIn(str(self.root), json.dumps(payload))
+
+        status, _headers, filtered = self.json_request(
+            "GET",
+            "/api/library?rating=nsfw&nsfw_subcategory=explicit&limit=20",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(filtered["filters"]["nsfw_subcategory"], "explicit")
+        status, _headers, bad = self.json_request(
+            "GET", "/api/library?nsfw_subcategory=explicit"
+        )
+        self.assertEqual(status, 400)
+        self.assertFalse(bad["ok"])
 
         status, _headers, bad = self.json_request("GET", "/api/library?unknown=1")
         self.assertEqual(status, 400)

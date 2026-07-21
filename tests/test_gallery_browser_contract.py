@@ -147,7 +147,7 @@ class GalleryBrowserContractTests(unittest.TestCase):
             Path(temporary.name).unlink(missing_ok=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_cards_use_only_cached_thumbnails_and_details_load_originals(self) -> None:
+    def test_cards_use_thumbnails_and_full_resolution_is_explicit(self) -> None:
         render_item = _function_body(self.script, "renderItem")
         self.assertIn("img.src = item.thumbnail_url", render_item)
         self.assertNotRegex(render_item, r"img\.src\s*=\s*item\.original_url")
@@ -155,14 +155,36 @@ class GalleryBrowserContractTests(unittest.TestCase):
         original_assignments = re.findall(
             r"\b\w+\.src\s*=\s*item\.original_url", self.script
         )
-        self.assertEqual(original_assignments, ["detailImage.src = item.original_url"])
+        self.assertEqual(original_assignments, ["loader.src = item.original_url"])
+        load_original = _function_body(self.script, "loadDetailOriginal")
+        self.assertIn("loader.src = item.original_url", load_original)
+        self.assertIn("generation !== detailImageGeneration", load_original)
+        self.assertIn("detailItemId !== item.id", load_original)
+        self.assertIn("detailOriginalLoader !== loader", load_original)
         self.assertIn(
-            "detailImage.src = item.original_url",
-            _function_body(self.script, "loadDetailOriginal"),
+            "var hasVisiblePreview = !detailImage.hidden && "
+            "detailImage.hasAttribute('src')",
+            load_original,
         )
+        self.assertIn("if (hasVisiblePreview)", load_original)
+        self.assertIn(
+            "keeping the cached thumbnail",
+            load_original,
+        )
+        self.assertIn(
+            "no thumbnail preview is available",
+            load_original,
+        )
+        load_tag, _load_attrs = self.element("detail-load-original")
+        self.assertEqual(load_tag, "button")
         open_detail = _function_body(self.script, "openDetail")
         self.assertIn("detailDialog.showModal()", open_detail)
-        self.assertIn("loadDetailOriginal(item)", open_detail)
+        self.assertNotIn("loadDetailOriginal(item)", open_detail)
+        self.assertNotIn("requestAnimationFrame", open_detail)
+        preview = _function_body(self.script, "renderDetailPreview")
+        self.assertIn("image.src = item.thumbnail_url", preview)
+        self.assertIn("generation !== detailImageGeneration", preview)
+        self.assertIn("if (item) loadDetailOriginal(item)", self.script)
         self.assertIn("img.loading = 'lazy'", render_item)
         self.assertIn("img.decoding = 'async'", render_item)
         self.assertIn("img.width", render_item)
@@ -181,6 +203,109 @@ class GalleryBrowserContractTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, lowered)
         self.assertNotRegex(self.html, r"[A-Za-z]:\\")
+
+    def test_nsfw_subcategory_uses_response_schema_three_end_to_end(self) -> None:
+        field_tag, field_attrs = self.element("nsfw-subcategory-field")
+        self.assertEqual(field_tag, "label")
+        self.assertIn("hidden", field_attrs)
+        select_tag, select_attrs = self.element("nsfw-subcategory")
+        self.assertEqual(select_tag, "select")
+        self.assertIn("disabled", select_attrs)
+        self.assertIn("var LIBRARY_RESPONSE_SCHEMA = 3", self.script)
+        self.assertIn(
+            "['', 'nudity', 'explicit', 'fetish', 'unspecified']",
+            self.script,
+        )
+
+        read_url = _function_body(self.script, "readUrl")
+        self.assertIn("p.get('nsfw_subcategory')", read_url)
+        self.assertIn("normalizeNsfwSubcategory()", read_url)
+        normalize = _function_body(self.script, "normalizeNsfwSubcategory")
+        self.assertIn("state.rating !== 'nsfw'", normalize)
+        self.assertIn("state.nsfw_subcategory = ''", normalize)
+
+        sync_url = _function_body(self.script, "syncUrl")
+        api_url = _function_body(self.script, "apiUrl")
+        for body in (sync_url, api_url):
+            self.assertIn("state.rating === 'nsfw'", body)
+            self.assertIn("nsfw_subcategory", body)
+
+        controls = _function_body(self.script, "updateControls")
+        self.assertIn("nsfwSubcategoryField.hidden", controls)
+        self.assertIn("nsfwSubcategorySelect.disabled", controls)
+        self.assertIn(
+            "setSelect('nsfw-subcategory', facets.nsfw_subcategories",
+            _function_body(self.script, "loadStatus"),
+        )
+        self.assertIn(
+            "Number(data.facets.schema_version) !== LIBRARY_RESPONSE_SCHEMA",
+            _function_body(self.script, "loadStatus"),
+        )
+        self.assertIn(
+            "Number(data.schema_version) !== LIBRARY_RESPONSE_SCHEMA",
+            _function_body(self.script, "loadMore"),
+        )
+        self.assertIn(
+            "nsfw_subcategory",
+            _function_body(self.script, "renderActiveFilterChips"),
+        )
+        self.assertIn(
+            "item.nsfw_subcategory",
+            _function_body(self.script, "renderDetailFacts"),
+        )
+        self.assertIn(
+            "'rating', 'nsfw_subcategory'",
+            _function_body(self.script, "applyPreset"),
+        )
+        self.assertIn(
+            "state.rating = allowed(button.dataset.rating, RATINGS, 'sfw');\n"
+            "        normalizeNsfwSubcategory();",
+            self.script,
+        )
+        for identifier in (
+            "recent",
+            "desktop-4k",
+            "portrait",
+            "needs-rating",
+            "least-tagged",
+            "shuffle",
+        ):
+            self.assertRegex(
+                self.script,
+                rf"'{re.escape(identifier)}': \{{[^\n}}]*nsfw_subcategory: ''",
+            )
+        self.assertIn(
+            "state.nsfw_subcategory = ''",
+            _function_body(self.script, "clearNavigationFilters"),
+        )
+        hydrate = _function_body(self.script, "hydrateFromHistory")
+        self.assertIn("readUrl()", hydrate)
+        self.assertIn("normalizeNsfwSubcategory()", read_url)
+        self.assertIn(
+            "window.addEventListener('popstate', hydrateFromHistory)",
+            self.script,
+        )
+
+    def test_accessibility_state_announcements_focus_and_motion_contract(self) -> None:
+        status_tag, status_attrs = self.element("status")
+        self.assertEqual(status_tag, "div")
+        self.assertEqual(status_attrs.get("role"), "status")
+        self.assertEqual(status_attrs.get("aria-atomic"), "true")
+        filters_tag, filters_attrs = self.element("filters")
+        self.assertEqual(filters_tag, "form")
+        self.assertEqual(filters_attrs.get("aria-label"), "Gallery filters")
+        grid_tag, grid_attrs = self.element("grid")
+        self.assertEqual(grid_tag, "section")
+        self.assertEqual(grid_attrs.get("aria-label"), "Wallpaper results")
+        self.assertNotIn("aria-live", grid_attrs)
+
+        rating_tabs = _function_body(self.script, "paintRatingTabs")
+        self.assertIn("button.setAttribute('aria-pressed'", rating_tabs)
+        self.assertIn(":focus-visible", self.html)
+        self.assertIn("outline: 3px solid var(--accent)", self.html)
+        self.assertIn("min-height: 28px", self.html)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", self.html)
+        self.assertIn("transition: none !important", self.html)
 
     def test_counted_keyboard_autocomplete_applies_exact_provider_tags(self) -> None:
         tag, attrs = self.element("tag")
@@ -270,7 +395,9 @@ class GalleryBrowserContractTests(unittest.TestCase):
             2,
         )
         self.assertNotIn("document.querySelectorAll('[data-rating]')", self.script)
-        self.assertIn(scoped_selector, _function_body(self.script, "paintRatingTabs"))
+        paint = _function_body(self.script, "paintRatingTabs")
+        self.assertIn(scoped_selector, paint)
+        self.assertIn("setAttribute('aria-pressed'", paint)
         self.assertIn("detailDialog.dataset.rating", _function_body(self.script, "openDetail"))
 
     def test_density_fit_and_seed_are_bookmarkable_without_page_offsets(self) -> None:
@@ -291,6 +418,61 @@ class GalleryBrowserContractTests(unittest.TestCase):
         self.assertIn("shuffle_seed", api_url)
         self.assertIn("String(state.seed)", api_url)
 
+    def test_navigation_pushes_intent_and_popstate_rehydrates_without_ephemera(self) -> None:
+        sync = _function_body(self.script, "syncUrl")
+        self.assertIn("history.pushState", sync)
+        self.assertIn("history.replaceState", sync)
+        self.assertIn("nextKey === currentKey", sync)
+        commit = _function_body(self.script, "commitNavigation")
+        self.assertIn("syncUrl('push')", commit)
+        self.assertIn("if (resetCollection) resetFeed()", commit)
+
+        hydrate = _function_body(self.script, "hydrateFromHistory")
+        for hook in (
+            "readUrl()",
+            "updateControls()",
+            "syncUrl('replace')",
+            "resetFeed()",
+        ):
+            self.assertIn(hook, hydrate)
+        self.assertEqual(
+            self.script.count("window.addEventListener('popstate'"),
+            1,
+        )
+        self.assertIn(
+            "readUrl();\n    updateControls();\n    syncUrl('replace');",
+            self.script,
+        )
+        self.assertNotIn("syncUrl", _function_body(self.script, "resetFeed"))
+        self.assertNotIn("syncUrl", _function_body(self.script, "appendBatch"))
+        for ephemeral in (
+            "selectedIds",
+            "data-reveal-nsfw",
+            "activeTransferJob",
+            "detailItemId",
+        ):
+            self.assertNotIn(ephemeral, sync)
+            self.assertNotIn(ephemeral, _function_body(self.script, "readUrl"))
+
+    def test_transfer_controls_and_dialog_have_responsive_contracts(self) -> None:
+        options_tag, options_attrs = self.element("transfer-options")
+        self.assertEqual(options_tag, "div")
+        self.assertIn("hidden", options_attrs)
+        _, selection_attrs = self.element("selection-count")
+        self.assertEqual(selection_attrs.get("aria-live"), "polite")
+        selection = _function_body(self.script, "updateSelectionUi")
+        self.assertIn("transferExpanded", selection)
+        self.assertIn("transferOptions.hidden = !transferExpanded", selection)
+        for query in (
+            "@media (max-width: 768px)",
+            "@media (max-width: 390px)",
+            "@media (max-width: 320px)",
+            "@media (max-width: 768px) and (orientation: landscape)",
+        ):
+            self.assertIn(query, self.html)
+        self.assertIn("max-height: calc(100dvh - 24px)", self.html)
+        self.assertIn(".transfer-bar { position: static; }", self.html)
+
     def test_named_presets_are_ordinary_filters_and_active_chips(self) -> None:
         for identifier in (
             "recent",
@@ -309,9 +491,19 @@ class GalleryBrowserContractTests(unittest.TestCase):
         self.assertIn("bucket: '4K'", self.script)
         apply_preset = _function_body(self.script, "applyPreset")
         self.assertIn("state[key] = preset[key]", apply_preset)
-        self.assertIn("resetFeed()", apply_preset)
+        self.assertIn("commitNavigation(true)", apply_preset)
         chips = _function_body(self.script, "renderActiveFilterChips")
-        for key in ("rating", "source", "orientation", "bucket", "tag", "franchise", "sort", "preset"):
+        for key in (
+            "rating",
+            "nsfw_subcategory",
+            "source",
+            "orientation",
+            "bucket",
+            "tag",
+            "franchise",
+            "sort",
+            "preset",
+        ):
             self.assertIn(key, chips)
 
     def test_suggestion_review_is_post_only_and_separate_from_provider_tags(self) -> None:

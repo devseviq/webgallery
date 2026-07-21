@@ -658,6 +658,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         )
         allowed = {
             "rating",
+            "nsfw_subcategory",
             "orientation",
             "franchise",
             "bucket",

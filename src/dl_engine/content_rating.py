@@ -91,6 +91,113 @@ SUGGESTIVE_TERMS: frozenset[str] = frozenset(
     }
 )
 
+# ---------------------------------------------------------------------------
+# NSFW subcategory (second axis). Only meaningful when the overall content
+# rating is ``nsfw``. It splits the single ``nsfw`` bucket so the gallery can
+# stop lumping every adult image together. Precedence is explicit > fetish >
+# nudity > unspecified. ``unspecified`` is the triage bucket: provider-marked
+# NSFW with no matching sub-tag, i.e. exactly the images that used to be
+# indistinguishable inside the lump.
+# ---------------------------------------------------------------------------
+NSFW_SUB_NUDITY = "nudity"
+NSFW_SUB_EXPLICIT = "explicit"
+NSFW_SUB_FETISH = "fetish"
+NSFW_SUB_UNSPECIFIED = "unspecified"
+NSFW_SUBCATEGORIES = (
+    NSFW_SUB_NUDITY,
+    NSFW_SUB_EXPLICIT,
+    NSFW_SUB_FETISH,
+    NSFW_SUB_UNSPECIFIED,
+)
+
+# Bare bodies without a depicted sex act (solo / artistic / glamour nudity).
+NSFW_NUDITY_TERMS: frozenset[str] = frozenset(
+    {
+        "areola",
+        "artistic nudity",
+        "bare breasts",
+        "bottomless",
+        "breast",
+        "breasts",
+        "completely naked",
+        "naked",
+        "nipple",
+        "nipples",
+        "no bra",
+        "no clothes",
+        "nude",
+        "nudity",
+        "topless",
+        "undressed",
+        "vagina",
+        "vulva",
+    }
+)
+
+# Depicted sexual acts (or the umbrella drawn-explicit term).
+NSFW_EXPLICIT_ACT_TERMS: frozenset[str] = frozenset(
+    {
+        "69",
+        "anal",
+        "anal sex",
+        "blowjob",
+        "creampie",
+        "cum",
+        "double penetration",
+        "ejaculation",
+        "fingering",
+        "gangbang",
+        "handjob",
+        "hentai",
+        "intercourse",
+        "masturbation",
+        "oral sex",
+        "orgy",
+        "paizuri",
+        "penetration",
+        "scissoring",
+        "semen",
+        "sex",
+        "sexual intercourse",
+        "threesome",
+        "vaginal sex",
+    }
+)
+
+# Fetish / kink themes (no specific act required).
+NSFW_FETISH_TERMS: frozenset[str] = frozenset(
+    {
+        "armpits",
+        "bdsm",
+        "bondage",
+        "bound",
+        "collar",
+        "domination",
+        "femdom",
+        "feet",
+        "foot fetish",
+        "gag",
+        "gagged",
+        "humiliation",
+        "latex",
+        "leash",
+        "leather",
+        "maledom",
+        "masochism",
+        "nipple clamps",
+        "pet play",
+        "restraints",
+        "sadism",
+        "shibari",
+        "slave",
+        "spanking",
+        "submission",
+        "submissive",
+        "tied up",
+        "whipping",
+    }
+)
+
 _SPACE_RE = re.compile(r"\s+")
 _NON_WORD_RE = re.compile(r"[^\w]+", flags=re.UNICODE)
 
@@ -182,12 +289,67 @@ def classify_tag_blob(purity: object, tag_blob: object) -> str:
     return classify_content(purity, tags).rating
 
 
+def classify_nsfw_subcategory(
+    purity: object,
+    tags: Iterable[Any] = (),
+) -> str:
+    """Derive a finer NSFW subcategory (second axis).
+
+    Returns one of :data:`NSFW_SUBCATEGORIES`. Precedence is
+    ``explicit`` > ``fetish`` > ``nudity`` > ``unspecified``. The result is
+    only meaningful when :func:`classify_content` already rates the image as
+    ``nsfw``; for any other rating (or no signal) it returns ``unspecified``,
+    which is also the triage bucket for provider-NSFW images with no matching
+    sub-tag.
+    """
+
+    # Callers may provide a generator. Materialize it once so the overall
+    # rating and second-axis classifier inspect identical evidence.
+    materialized_tags = tuple(tags)
+    normalized_purity = normalize_label(purity)
+    overall = classify_content(purity, materialized_tags).rating
+    if overall != RATING_NSFW:
+        return NSFW_SUB_UNSPECIFIED
+
+    labels = tuple(
+        label
+        for label in (
+            normalize_label(_tag_name(tag)) for tag in materialized_tags
+        )
+        if label
+    )
+    if _matching_terms(labels, NSFW_EXPLICIT_ACT_TERMS):
+        return NSFW_SUB_EXPLICIT
+    if _matching_terms(labels, NSFW_FETISH_TERMS):
+        return NSFW_SUB_FETISH
+    if _matching_terms(labels, NSFW_NUDITY_TERMS):
+        return NSFW_SUB_NUDITY
+    # Provider purity already forced NSFW up in classify_content; keep that
+    # signal so a purity-only NSFW image still lands here rather than nudity.
+    if normalized_purity in {"adult", "explicit", "nsfw", "unsafe"}:
+        return NSFW_SUB_UNSPECIFIED
+    return NSFW_SUB_UNSPECIFIED
+
+
+def nsfw_subcategory_tag_blob(purity: object, tag_blob: object) -> str:
+    """SQLite-friendly NSFW subcategory using unit-separated tag names."""
+
+    tags = [] if tag_blob is None else str(tag_blob).split(TAG_SEPARATOR)
+    return classify_nsfw_subcategory(purity, tags)
+
+
 def register_sqlite_function(conn: sqlite3.Connection) -> None:
-    """Register the deterministic scalar used by content-rating queries."""
+    """Register the deterministic scalars used by content-rating queries."""
 
     conn.create_function(
         "wallpaper_content_rating",
         2,
         classify_tag_blob,
+        deterministic=True,
+    )
+    conn.create_function(
+        "wallpaper_nsfw_subcategory",
+        2,
+        nsfw_subcategory_tag_blob,
         deterministic=True,
     )

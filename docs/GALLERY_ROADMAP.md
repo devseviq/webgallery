@@ -318,3 +318,116 @@ and the live suggestion-review canary remain outstanding. Promotion requires tho
 remaining authorized gates and a current verification result at the promotion
 boundary. Until then, the UI must continue to display the live verification API
 result and must never infer safety or verification from missing evidence.
+
+## Plan 003 hardening snapshot (2026-07-20)
+
+Plan 003 supersedes the repository-contract descriptions above without
+rewriting Plan 002's historical live evidence. Repository code now targets
+rebuildable gallery schema 4 and library response schema 3. It materializes the
+validated NSFW subcategory, migrates and backfills schema 3 transactionally,
+enforces the NSFW-only invariant, verifies derived and facet drift, and reads
+each page from one SQLite snapshot. The browser consumes that contract through
+an NSFW-only category control, URL state and details; it also adds pressed
+rating state, concise announcements, consistent focus, reduced motion,
+Back/Forward hydration, explicit full-resolution loading with stale-request
+guards, and narrow-screen transfer/dialog behavior. Thumbnail interruption
+cleanup now re-raises cancellation unchanged, removes only the operation's UUID
+temporary file, publishes no final file, and retains ordinary generation versus
+encoder diagnostics.
+
+Direct regression coverage exists for every repository-side Plan 003 contract:
+
+- `test_schema3_migration_backfills_subcategory_and_publishes_last`,
+  `test_schema3_migration_rolls_back_subcategory_and_version`,
+  `test_refresh_uses_authoritative_tags_and_nsfw_only_facets`, and
+  `test_verifier_detects_subcategory_field_and_facet_drift` cover schema 4,
+  rollback, authoritative evidence, NSFW-only facets, suggestion exclusion,
+  and derived/facet drift.
+- `test_query_page_pins_rows_tags_and_suggestions_to_one_wal_snapshot`, the
+  response-schema/filter tests, and the exact server allowlist tests cover the
+  one-response snapshot, response schema 3, legacy query compatibility, and
+  HTTP forwarding/denial boundaries.
+- The static browser suite directly covers subcategory wiring, accessibility,
+  opt-in originals, stale-load guards, history without ephemeral selection or
+  reveal resurrection, responsive controls, autocomplete, presets, pagination,
+  dialog keyboard use, NSFW reveal, and selection safety.
+- `test_interruption_re_raises_and_cleans_only_its_temporary_file` covers both
+  `KeyboardInterrupt` and `SystemExit`; the adjacent ordinary-failure regression
+  proves cancellation is not collapsed into `ThumbnailError` and the earlier
+  diagnostic branches remain distinct.
+
+### Repository verification
+
+Python 3.14.6 in the project venv produced the following current results:
+
+| Command | Result |
+|---|---|
+| `.\.venv\Scripts\python.exe -m pytest -q tests/test_gallery_thumbnails.py` | 14 passed, 11 subtests passed in 0.38 s |
+| `.\.venv\Scripts\python.exe -m compileall -q src reports tests` | passed |
+| focused Plan 003 pytest command | 192 passed, 65 subtests passed in 13.11 s |
+| `.\.venv\Scripts\python.exe -m pytest -q` | 217 passed, 65 subtests passed in 13.23 s |
+| `git diff --check` | passed; only checkout-dependent LF-to-CRLF warnings were emitted |
+
+Pytest also emitted the existing non-fatal `.pytest_cache` WinError 183 warning;
+there were no skipped checks or test failures.
+
+### Disposable HTTP evidence
+
+After a fresh `VERIFIED` `snd-host` / `SND-HOST` identity result, an ephemeral
+loopback listener on port 61923 (PID 40112) used only a temporary schema-4
+database, library, cache, environment, queue, and report fixture while serving
+the current `F:\Wallpapers\webgallery\reports\library-browser.html`. The listener
+stopped and the entire fixture was removed after these probes:
+
+| Probe | Result |
+|---|---|
+| gallery HTML | 200, 90,085 bytes, 1.889 ms |
+| explicit `rating=nsfw&nsfw_subcategory=explicit` page | 200, schema 3, 1 item, 1,389 bytes, 4.650 ms |
+| legacy NSFW page without subcategory | 200, schema 3, null subcategory filter, 1 item, 1,383 bytes, 9.624 ms |
+| facets | 200, 568 bytes, 14.173 ms; constant shape was explicit 1 and the other three values 0 |
+| thumbnail / explicit original | 200 WebP, 440 bytes, 57.320 ms / 200 JPEG, 7,240 bytes, 28.291 ms |
+| invalid SFW plus explicit subcategory | 400, 60 bytes, 21.723 ms |
+| database, queue, environment, source, backup, and arbitrary paths | all 404; HEAD timings 0.669-14.781 ms |
+| transfer status | 200, 132 bytes, 5.346 ms, `enabled=false`, zero targets |
+
+### Live-browser gate
+
+The browser controller was available and Chrome loaded the exact Plan 003 page
+from the explicit-root `127.0.0.1:8091` listener. The required live database,
+`F:\Wallpapers\webgallery_library.sqlite`, is still schema 3, however, while the
+current reader requires schema 4. `/api/library/status` therefore returned 503,
+the initial SFW page returned 400, and the visible feed reported `index schema
+version 3 is not 4` with zero cards. Browser console warning/error collection
+was empty, but the visible API/page failure is a hard prerequisite blocker.
+
+WPI is not authorized to migrate or publish that live database, so it did not
+claim subcategory, Back/Forward, opt-in-original, rapid navigation, focus,
+reduced-motion, 200% zoom, 320/390/768 CSS-pixel, narrow-landscape, modal-scroll,
+transfer-occlusion, autocomplete, preset, pagination, dialog, NSFW reveal, or
+selection browser coverage. The WPI launcher and listener PIDs 4060 and 41964
+were stopped, port 8091 was released, temporary logs were removed, and legacy
+8090 remained untouched on PID 39260. No Send action, suggestion review,
+provider canary, database rebuild/publication, queue mutation, or canonical
+media mutation occurred.
+
+### Recovery, promotion, and follow-on work
+
+The non-clearing stash `2cdda350b87af5e5aec9a19a2ccc422e56a72c12` remains
+untouched. It is recovery evidence for the original content-rating and
+thumbnail hunks, not a release artifact. Current work preserves those hunks;
+the sibling `F:\Wallpapers\wallpaper_library.sqlite` remains schema 2.
+
+The immediate next gate is an explicitly authorized publication and exhaustive
+verification of the separate schema-4 gallery database, followed by the full
+alternate-listener browser matrix above. Deliberate 8090 cutover, the bounded
+provider canary, live suggestion-review canary, and promotion-boundary
+verification remain separate and incomplete.
+
+Follow-on campaigns remain explicit: typed multi-tag identity; a durable
+suggestion input/decision ledger with replay; materialized provider
+coverage/generation; cursor pagination with bounded DOM retention; multiple
+tag-evidence provenances; and selection of a retained repository-level browser
+automation gate. Until that last selection, retain the current controlled
+browser smoke as an operational gate. Masonry, embeddings/semantic similarity,
+a framework rewrite, offline/service-worker support, and shareable detail URLs
+remain deferred unless their prerequisites change.

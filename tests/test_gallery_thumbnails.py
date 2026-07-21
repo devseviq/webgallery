@@ -192,6 +192,64 @@ class GalleryThumbnailTests(unittest.TestCase):
             [],
         )
 
+    def test_interruption_re_raises_and_cleans_only_its_temporary_file(self) -> None:
+        source = self.image("interrupted.png", (40, 40))
+        cases = (
+            (KeyboardInterrupt("cancelled"), "e" * 64),
+            (SystemExit(17), "f" * 64),
+        )
+        for interruption, digest in cases:
+            with self.subTest(interruption=type(interruption).__name__):
+                final_path = thumbnail_cache_path(self.cache, digest)
+                final_path.parent.mkdir(parents=True, exist_ok=True)
+                unrelated = final_path.parent / ".unrelated.tmp"
+                unrelated.write_bytes(b"keep")
+                temporary_paths: list[Path] = []
+
+                def interrupt_after_temporary_exists(
+                    _source: Path,
+                    temporary: Path,
+                    _spec: ThumbnailSpec,
+                ) -> None:
+                    temporary.write_bytes(b"partial")
+                    temporary_paths.append(temporary)
+                    raise interruption
+
+                with mock.patch.object(
+                    gallery_thumbnails,
+                    "_generate_thumbnail",
+                    side_effect=interrupt_after_temporary_exists,
+                ):
+                    with self.assertRaises(type(interruption)) as raised:
+                        ensure_thumbnail(source, self.cache, digest)
+
+                self.assertIs(raised.exception, interruption)
+                self.assertEqual(len(temporary_paths), 1)
+                self.assertFalse(temporary_paths[0].exists())
+                self.assertEqual(unrelated.read_bytes(), b"keep")
+                self.assertFalse(final_path.exists())
+
+    def test_ordinary_generation_failures_keep_diagnostic_wrapping(self) -> None:
+        source = self.image("ordinary-failure.png", (40, 40))
+        cases = (
+            (OSError("decode"), "thumbnail generation failed", "1" * 64),
+            (RuntimeError("encoder"), "thumbnail encoder failed", "2" * 64),
+        )
+        for failure, message, digest in cases:
+            with self.subTest(failure=type(failure).__name__):
+                final_path = thumbnail_cache_path(self.cache, digest)
+                with mock.patch.object(
+                    gallery_thumbnails,
+                    "_generate_thumbnail",
+                    side_effect=failure,
+                ):
+                    with self.assertRaisesRegex(ThumbnailError, message) as raised:
+                        ensure_thumbnail(source, self.cache, digest)
+
+                self.assertIs(raised.exception.__cause__, failure)
+                self.assertFalse(final_path.exists())
+                self.assertEqual(list(final_path.parent.glob("*.tmp")), [])
+
     def test_concurrent_calls_publish_one_stable_artifact(self) -> None:
         source = self.image("concurrent.jpg", (1600, 900))
 

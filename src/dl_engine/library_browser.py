@@ -10,11 +10,11 @@ import re
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit
 
-from .content_rating import CONTENT_RATINGS
+from .content_rating import CONTENT_RATINGS, NSFW_SUBCATEGORIES
 from . import index_library as index
 
 
-RESPONSE_SCHEMA_VERSION = 2
+RESPONSE_SCHEMA_VERSION = 3
 DEFAULT_PAGE_SIZE = 48
 MAX_PAGE_SIZE = 100
 DEFAULT_SORT = "newest"
@@ -173,6 +173,7 @@ def _serialize_row(row: index.ImageRow, library_root: Path) -> dict[str, Any]:
         "rating_confidence": row.rating_confidence,
         "rating_basis": row.rating_basis,
         "rating_reasons": list(row.rating_reasons),
+        "nsfw_subcategory": row.nsfw_subcategory,
         "size_bytes": row.size_bytes,
         "downloaded_at": row.download_recorded_at,
         "sha256": digest.casefold() if _SHA256_RE.fullmatch(digest) else None,
@@ -201,6 +202,17 @@ def query_library_page(
         if rating not in CONTENT_RATINGS:
             raise ValueError("rating must be one of: " + ", ".join(CONTENT_RATINGS))
 
+    nsfw_subcategory = _clean_filter(filters.get("nsfw_subcategory"))
+    if nsfw_subcategory is not None:
+        nsfw_subcategory = nsfw_subcategory.casefold()
+        if nsfw_subcategory not in NSFW_SUBCATEGORIES:
+            raise ValueError(
+                "nsfw_subcategory must be one of: "
+                + ", ".join(NSFW_SUBCATEGORIES)
+            )
+        if rating != "nsfw":
+            raise ValueError("nsfw_subcategory requires rating=nsfw")
+
     sort = (_clean_filter(filters.get("sort")) or DEFAULT_SORT).casefold()
     if sort not in index.QUERY_SORTS:
         raise ValueError("sort must be one of: " + ", ".join(index.QUERY_SORTS))
@@ -225,6 +237,9 @@ def query_library_page(
 
     conn = index.open_index_read_only(Path(db_path))
     try:
+        # Pin count, image rows, authoritative tags, and suggestions to one
+        # SQLite snapshot even if another WAL connection commits mid-page.
+        conn.execute("BEGIN")
         total_indexed = conn.execute("SELECT COUNT(*) FROM images").fetchone()[0]
         rows = index.query(
             conn,
@@ -234,12 +249,14 @@ def query_library_page(
             source=_clean_filter(filters.get("source")),
             tag=_clean_filter(filters.get("tag")),
             content_rating=rating,
+            nsfw_subcategory=nsfw_subcategory,
             sort=sort,
             shuffle_seed=shuffle_seed,
             limit=limit + 1,
             offset=offset,
         )
     finally:
+        conn.rollback()
         conn.close()
 
     has_more = len(rows) > limit
@@ -255,6 +272,7 @@ def query_library_page(
         },
         "filters": {
             "rating": rating,
+            "nsfw_subcategory": nsfw_subcategory,
             "orientation": _clean_filter(filters.get("orientation")),
             "franchise": _clean_filter(filters.get("franchise")),
             "bucket": _clean_filter(filters.get("bucket")),
@@ -299,10 +317,15 @@ def library_facets(db_path: Path) -> dict[str, Any]:
 
     ratings = _facet_values(materialized, "rating", "content_rating")
     ratings = {rating: ratings.get(rating, 0) for rating in CONTENT_RATINGS}
+    nsfw_subcategories = _facet_values(materialized, "nsfw_subcategory")
+    nsfw_subcategories = {
+        value: nsfw_subcategories.get(value, 0) for value in NSFW_SUBCATEGORIES
+    }
     return {
         "schema_version": RESPONSE_SCHEMA_VERSION,
         "indexed_images": int(coverage["total_images"]),
         "ratings": ratings,
+        "nsfw_subcategories": nsfw_subcategories,
         "sources": _facet_values(materialized, "source"),
         "orientations": _facet_values(materialized, "orientation"),
         "buckets": _facet_values(materialized, "resolution_bucket", "bucket"),

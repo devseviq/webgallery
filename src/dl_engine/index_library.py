@@ -81,7 +81,10 @@ from typing import Optional, Sequence
 
 from .content_rating import (
     CONTENT_RATINGS,
+    NSFW_SUBCATEGORIES,
+    NSFW_SUB_UNSPECIFIED,
     classify_content,
+    classify_nsfw_subcategory,
     normalize_label,
     register_sqlite_function as register_content_rating_sqlite_function,
 )
@@ -99,7 +102,7 @@ logger = logging.getLogger(__name__)
 # Paths and tunables
 # ---------------------------------------------------------------------------
 
-DB_SCHEMA_VERSION = 3
+DB_SCHEMA_VERSION = 4
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 SQLITE_JOURNAL_MODE = "wal"
 
@@ -116,7 +119,7 @@ _VERIFY_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
             "sha256", "size_bytes", "transport", "source_relative_path",
             "download_recorded_at", "search_origins_json",
             "content_rating", "rating_confidence", "rating_basis",
-            "rating_reasons_json", "tag_count",
+            "rating_reasons_json", "nsfw_subcategory", "tag_count",
         }
     ),
     "tags": frozenset(
@@ -253,6 +256,11 @@ CREATE TABLE IF NOT EXISTS images (
                        CHECK(rating_confidence >= 0 AND rating_confidence <= 1),
     rating_basis       TEXT NOT NULL DEFAULT 'no-signal',
     rating_reasons_json TEXT NOT NULL DEFAULT '[]',
+    nsfw_subcategory   TEXT NOT NULL DEFAULT 'unspecified'
+                       CHECK(nsfw_subcategory IN
+                             ('nudity','explicit','fetish','unspecified'))
+                       CHECK(content_rating='nsfw' OR
+                             nsfw_subcategory='unspecified'),
     tag_count          INTEGER NOT NULL DEFAULT 0 CHECK(tag_count >= 0)
 );
 
@@ -694,8 +702,26 @@ def _ensure_column(
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
 
 
+def _ensure_nsfw_subcategory_triggers(conn: sqlite3.Connection) -> None:
+    """Enforce the cross-field invariant on fresh and additively migrated DBs."""
+
+    for operation, event in (
+        ("insert", "INSERT"),
+        ("update", "UPDATE OF content_rating, nsfw_subcategory"),
+    ):
+        conn.execute(
+            f"CREATE TRIGGER IF NOT EXISTS "
+            f"trg_images_nsfw_subcategory_{operation} "
+            f"BEFORE {event} ON images "
+            "WHEN NEW.content_rating <> 'nsfw' "
+            "AND NEW.nsfw_subcategory <> 'unspecified' "
+            "BEGIN SELECT RAISE(ABORT, "
+            "'non-NSFW images require nsfw_subcategory=unspecified'); END"
+        )
+
+
 def _migrate_schema(conn: sqlite3.Connection) -> None:
-    """Apply additive, idempotent migrations through schema version 3."""
+    """Apply additive, idempotent migrations through schema version 4."""
     previous_user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
     existing_image_columns = _table_columns(conn, "images")
     existing_tag_columns = _table_columns(conn, "tags")
@@ -707,7 +733,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     )
     derived_columns = {
         "content_rating", "rating_confidence", "rating_basis",
-        "rating_reasons_json", "tag_count",
+        "rating_reasons_json", "nsfw_subcategory", "tag_count",
     }
     needs_derived_backfill = (
         previous_user_version < DB_SCHEMA_VERSION
@@ -735,10 +761,16 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         ),
         "rating_basis": "TEXT NOT NULL DEFAULT 'no-signal'",
         "rating_reasons_json": "TEXT NOT NULL DEFAULT '[]'",
+        "nsfw_subcategory": (
+            "TEXT NOT NULL DEFAULT 'unspecified' "
+            "CHECK(nsfw_subcategory IN "
+            "('nudity','explicit','fetish','unspecified'))"
+        ),
         "tag_count": "INTEGER NOT NULL DEFAULT 0 CHECK(tag_count >= 0)",
     }
     for name, declaration in image_columns.items():
         _ensure_column(conn, "images", name, declaration)
+    _ensure_nsfw_subcategory_triggers(conn)
 
     tag_columns = {
         "source": "TEXT",
@@ -773,6 +805,8 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     index_statements = (
         "CREATE INDEX IF NOT EXISTS idx_images_content_rating "
         "ON images(content_rating, id)",
+        "CREATE INDEX IF NOT EXISTS idx_images_nsfw_subcategory "
+        "ON images(content_rating, nsfw_subcategory, id)",
         "CREATE INDEX IF NOT EXISTS idx_images_tag_count "
         "ON images(tag_count, download_recorded_at DESC, id DESC)",
         "CREATE INDEX IF NOT EXISTS idx_images_download_recorded_at "
@@ -925,7 +959,7 @@ def _preflight_writable_schema(conn: sqlite3.Connection) -> None:
             "schema version markers disagree: "
             f"user_version={user_version}, metadata={metadata_version}"
         )
-    if user_version in {2, DB_SCHEMA_VERSION} and metadata_version is None:
+    if user_version in {2, 3, DB_SCHEMA_VERSION} and metadata_version is None:
         raise ValueError(
             f"schema version {user_version} requires schema_metadata marker"
         )
@@ -1090,6 +1124,7 @@ class ImageRow:
     rating_confidence: float
     rating_basis: str
     rating_reasons: tuple[str, ...]
+    nsfw_subcategory: str
     tag_count: int
     tags: tuple[IndexedTag, ...]
     tag_suggestions: tuple[TagSuggestion, ...]
@@ -1142,6 +1177,7 @@ class ImageRow:
             rating_confidence=materialized_rating.confidence,
             rating_basis=materialized_rating.basis,
             rating_reasons=materialized_rating.reasons,
+            nsfw_subcategory=str(row["nsfw_subcategory"]),
             tag_count=int(row["tag_count"]),
             tags=tuple(tags),
             tag_suggestions=tuple(suggestions),
@@ -1186,6 +1222,12 @@ def _refresh_library_facets(conn: sqlite3.Connection, refreshed_at: str) -> int:
             f"GROUP BY {expression}",
             (facet, refreshed_at),
         )
+    conn.execute(
+        "INSERT INTO library_facets(facet, value, count, refreshed_at) "
+        "SELECT 'nsfw_subcategory', nsfw_subcategory, COUNT(*), ? "
+        "FROM images WHERE content_rating='nsfw' GROUP BY nsfw_subcategory",
+        (refreshed_at,),
+    )
     tag_bucket = (
         "CASE WHEN tag_count=0 THEN '0' WHEN tag_count=1 THEN '1' "
         "WHEN tag_count BETWEEN 2 AND 4 THEN '2-4' "
@@ -1293,6 +1335,9 @@ def refresh_derived_metadata(
             image_id = int(image_row["id"])
             tags = tags_by_image[image_id]
             rating = classify_content(image_row["purity"], tags)
+            nsfw_subcategory = classify_nsfw_subcategory(
+                image_row["purity"], tags
+            )
             updates.append(
                 (
                     rating.rating,
@@ -1302,13 +1347,15 @@ def refresh_derived_metadata(
                         list(rating.reasons), ensure_ascii=False,
                         separators=(",", ":"),
                     ),
+                    nsfw_subcategory,
                     len(tags),
                     image_id,
                 )
             )
         conn.executemany(
             "UPDATE images SET content_rating=?, rating_confidence=?, "
-            "rating_basis=?, rating_reasons_json=?, tag_count=? WHERE id=?",
+            "rating_basis=?, rating_reasons_json=?, nsfw_subcategory=?, "
+            "tag_count=? WHERE id=?",
             updates,
         )
         facet_count = 0
@@ -2080,7 +2127,7 @@ def _validate_current_index_schema(conn: sqlite3.Connection) -> None:
 
 
 def open_index_write(db_path: Path) -> sqlite3.Connection:
-    """Open schema-3 in read/write mode without creating or migrating it."""
+    """Open schema-4 in read/write mode without creating or migrating it."""
     database = Path(db_path).resolve()
     if not database.is_file():
         raise FileNotFoundError(f"SQLite database does not exist: {database}")
@@ -2359,7 +2406,8 @@ def verify_library(db_path: Path, library_root: Path) -> dict[str, object]:
         if structurally_compatible:
             derived_rows = conn.execute(
                 "SELECT id,purity,content_rating,rating_confidence,rating_basis,"
-                "rating_reasons_json,tag_count FROM images ORDER BY id"
+                "rating_reasons_json,nsfw_subcategory,tag_count "
+                "FROM images ORDER BY id"
             ).fetchall()
             tags_by_image: dict[int, list[dict[str, str]]] = {
                 int(row["id"]): [] for row in derived_rows
@@ -2375,6 +2423,9 @@ def verify_library(db_path: Path, library_root: Path) -> dict[str, object]:
             for row in derived_rows:
                 image_id = int(row["id"])
                 rating = classify_content(row["purity"], tags_by_image[image_id])
+                nsfw_subcategory = classify_nsfw_subcategory(
+                    row["purity"], tags_by_image[image_id]
+                )
                 try:
                     reasons = json.loads(row["rating_reasons_json"])
                     valid_reasons = (
@@ -2399,6 +2450,14 @@ def verify_library(db_path: Path, library_root: Path) -> dict[str, object]:
                     mismatches.append("rating_basis")
                 if not valid_reasons or reasons != list(rating.reasons):
                     mismatches.append("rating_reasons_json")
+                if row["nsfw_subcategory"] != nsfw_subcategory:
+                    mismatches.append("nsfw_subcategory")
+                if (
+                    row["content_rating"] != "nsfw"
+                    and row["nsfw_subcategory"] != NSFW_SUB_UNSPECIFIED
+                    and "nsfw_subcategory" not in mismatches
+                ):
+                    mismatches.append("nsfw_subcategory")
                 if row["tag_count"] != len(tags_by_image[image_id]):
                     mismatches.append("tag_count")
                 if mismatches:
@@ -2469,6 +2528,14 @@ def verify_library(db_path: Path, library_root: Path) -> dict[str, object]:
                     f"FROM images GROUP BY {expression}"
                 ):
                     expected_facets[(facet, str(row["value"]))] = int(row["count"])
+            for row in conn.execute(
+                "SELECT nsfw_subcategory AS value,COUNT(*) AS count "
+                "FROM images WHERE content_rating='nsfw' "
+                "GROUP BY nsfw_subcategory"
+            ):
+                expected_facets[("nsfw_subcategory", str(row["value"]))] = int(
+                    row["count"]
+                )
             tag_bucket = (
                 "CASE WHEN tag_count=0 THEN '0' WHEN tag_count=1 THEN '1' "
                 "WHEN tag_count BETWEEN 2 AND 4 THEN '2-4' "
@@ -3492,6 +3559,7 @@ def query(
     source: Optional[str] = None,
     tag: Optional[str] = None,
     content_rating: Optional[str] = None,
+    nsfw_subcategory: Optional[str] = None,
     sort: str = "path",
     shuffle_seed: Optional[int] = None,
     limit: int = 100,
@@ -3507,6 +3575,7 @@ def query(
         source: Canonical source token (legacy ``anime_pictures`` is accepted).
         tag: Exact (case-insensitive) tag name.
         content_rating: ``sfw`` | ``suggestive`` | ``nsfw`` | ``unknown``.
+        nsfw_subcategory: Finer NSFW classification; requires ``nsfw`` rating.
         sort: Stable result order; one of :data:`QUERY_SORTS`.
         limit: Max rows to return.
         offset: Number of matching rows to skip for pagination.
@@ -3525,6 +3594,17 @@ def query(
             )
         where.append("images.content_rating = ?")
         params.append(content_rating)
+    if nsfw_subcategory is not None:
+        nsfw_subcategory = nsfw_subcategory.strip().casefold()
+        if nsfw_subcategory not in NSFW_SUBCATEGORIES:
+            raise ValueError(
+                "nsfw_subcategory must be one of: "
+                + ", ".join(NSFW_SUBCATEGORIES)
+            )
+        if content_rating != "nsfw":
+            raise ValueError("nsfw_subcategory requires content_rating='nsfw'")
+        where.append("images.nsfw_subcategory = ?")
+        params.append(nsfw_subcategory)
     if tag is not None:
         where.append(
             "EXISTS (SELECT 1 FROM image_tags it "
@@ -4573,7 +4653,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument(
         "--apply-provider-ledger", action="store_true",
-        help="Offline-apply --provider-ledger-path to the schema-3 index.",
+        help="Offline-apply --provider-ledger-path to the schema-4 index.",
     )
     parser.add_argument(
         "--export-wallhaven-ledger", type=Path, default=None, metavar="PATH",
@@ -4787,6 +4867,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         source=q.get("source"),
                         tag=q.get("tag"),
                         content_rating=q.get("rating") or q.get("content_rating"),
+                        nsfw_subcategory=q.get("nsfw_subcategory"),
                         sort=q.get("sort", "path"),
                         shuffle_seed=None if seed_text is None else int(seed_text),
                         limit=int(q.get("limit", "100")),

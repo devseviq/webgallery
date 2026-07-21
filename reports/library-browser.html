@@ -58,7 +58,7 @@
       padding: 10px;
       margin-bottom: 12px;
     }
-    button, select, input {
+    button, select, input, textarea {
       border: 1px solid var(--border);
       background: var(--panel-2);
       color: var(--text);
@@ -68,6 +68,10 @@
     }
     button { cursor: pointer; }
     button:hover, button.active { border-color: var(--accent); background: #21334d; }
+    :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 2px;
+    }
     button.primary { border-color: var(--accent); background: #17497b; font-weight: 700; }
     button[data-rating="sfw"].active { border-color: var(--sfw); }
     button[data-rating="suggestive"].active { border-color: var(--suggestive); }
@@ -141,6 +145,7 @@
       color: var(--text);
       cursor: pointer;
       user-select: none;
+      min-height: 32px;
     }
     .select-toggle input { margin: 0; }
     .tile.selected .select-toggle { border-color: var(--accent); background: #17497b; }
@@ -149,7 +154,7 @@
     .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 650; }
     .meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
     .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 7px; }
-    .tag { background: #1b2737; border: 1px solid transparent; border-radius: 999px; padding: 2px 6px; font-size: 10px; color: #c6d4e3; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag { display: inline-flex; align-items: center; min-height: 28px; background: #1b2737; border: 1px solid transparent; border-radius: 999px; padding: 4px 8px; font-size: 11px; color: #c6d4e3; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     button.tag { cursor: pointer; }
     button.tag:hover, button.tag:focus-visible { border-color: var(--accent); background: #21334d; }
     .empty { grid-column: 1 / -1; padding: 48px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 10px; }
@@ -160,6 +165,8 @@
       z-index: 20;
       box-shadow: 0 8px 30px rgba(0, 0, 0, .28);
     }
+    .transfer-options { display: contents; }
+    .transfer-options[hidden] { display: none; }
     .transfer-status { flex: 1 1 260px; color: var(--muted); }
     .transfer-status.success { color: var(--sfw); }
     .transfer-status.error { color: var(--nsfw); }
@@ -208,6 +215,7 @@
     dialog.detail-dialog {
       width: min(1180px, calc(100vw - 24px));
       max-height: calc(100vh - 24px);
+      max-height: calc(100dvh - 24px);
       padding: 0;
       color: var(--text);
       background: var(--panel);
@@ -239,13 +247,13 @@
     .detail-header h2 { flex: 1; min-width: 0; margin: 0; font-size: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .detail-layout { display: grid; grid-template-columns: minmax(320px, 1.25fr) minmax(300px, .75fr); }
     .detail-visual { min-width: 0; padding: 14px; background: #06090e; }
-    .detail-image-wrap { height: min(68vh, 760px); display: grid; place-items: center; overflow: hidden; border-radius: 8px; }
+    .detail-image-wrap { height: min(68vh, 760px); height: min(68dvh, 760px); display: grid; place-items: center; overflow: hidden; border-radius: 8px; }
     .detail-image { width: 100%; height: 100%; object-fit: var(--detail-fit); }
     body[data-reveal-nsfw="false"] .detail-dialog[data-rating="nsfw"] .detail-image { filter: blur(28px) brightness(.4); transform: scale(1.08); }
     .detail-status { min-height: 21px; margin-top: 8px; color: var(--muted); }
     .detail-status.error { color: var(--nsfw); }
     .detail-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
-    .detail-info { padding: 14px; overflow: auto; max-height: calc(100vh - 74px); }
+    .detail-info { padding: 14px; overflow: auto; max-height: calc(100vh - 74px); max-height: calc(100dvh - 74px); }
     .detail-info h3 { margin: 18px 0 7px; font-size: 15px; }
     .detail-info h3:first-child { margin-top: 0; }
     .facts { display: grid; grid-template-columns: minmax(105px, auto) 1fr; gap: 5px 10px; margin: 0; }
@@ -270,6 +278,17 @@
       position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
       overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
     }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        scroll-behavior: auto !important;
+        transition: none !important;
+      }
+    }
+    @media (max-width: 768px) {
+      .transfer-bar { position: static; }
+      dialog.detail-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+    }
     @media (max-width: 620px) {
       body[data-density="comfortable"] { --card-min: 145px; --media-height: 180px; }
       body[data-density="cinematic"] { --card-min: 220px; --media-height: 260px; }
@@ -279,7 +298,22 @@
       .filter-field { width: 100%; align-items: flex-start; flex-direction: column; }
       .combobox { min-width: 0; width: 100%; }
       .detail-layout { grid-template-columns: 1fr; }
-      .detail-image-wrap { height: 52vh; }
+      .detail-image-wrap { height: 52vh; height: 52dvh; }
+      .detail-info { max-height: none; }
+    }
+    @media (max-width: 390px) {
+      header, main { width: calc(100% - 16px); }
+      .detail-header { gap: 6px; padding-inline: 8px; }
+      .detail-header button { padding-inline: 8px; }
+    }
+    @media (max-width: 320px) {
+      .rating-tabs, .filters, .presentation-bar, .preset-bar, .active-filter-bar,
+      .transfer-bar, .scroll-footer { padding: 8px; }
+      .dialog-nav { min-width: 38px; }
+    }
+    @media (max-width: 768px) and (orientation: landscape) {
+      .detail-layout { grid-template-columns: 1fr; }
+      .detail-image-wrap { height: 44vh; height: 44dvh; }
       .detail-info { max-height: none; }
     }
   </style>
@@ -296,15 +330,15 @@
     </nav>
   </header>
   <main>
-    <div id="status" class="banner">Loading index status…</div>
+    <div id="status" class="banner" role="status" aria-live="polite" aria-atomic="true">Loading index status…</div>
 
     <section class="rating-tabs" aria-label="Content rating">
       <strong>Collection</strong>
-      <button type="button" data-rating="all">All <span class="count"></span></button>
-      <button type="button" data-rating="sfw">SFW <span class="count"></span></button>
-      <button type="button" data-rating="suggestive">Suggestive / Review <span class="count"></span></button>
-      <button type="button" data-rating="nsfw">NSFW <span class="count"></span></button>
-      <button type="button" data-rating="unknown">Unknown <span class="count"></span></button>
+      <button type="button" data-rating="all" aria-pressed="false">All <span class="count"></span></button>
+      <button type="button" data-rating="sfw" aria-pressed="true">SFW <span class="count"></span></button>
+      <button type="button" data-rating="suggestive" aria-pressed="false">Suggestive / Review <span class="count"></span></button>
+      <button type="button" data-rating="nsfw" aria-pressed="false">NSFW <span class="count"></span></button>
+      <button type="button" data-rating="unknown" aria-pressed="false">Unknown <span class="count"></span></button>
       <span class="spacer"></span>
       <label title="NSFW thumbnails remain blurred until explicitly revealed">
         <input id="reveal" type="checkbox"> Reveal NSFW thumbnails
@@ -343,7 +377,7 @@
       <button id="clear-all" type="button">Clear all</button>
     </section>
 
-    <form id="filters" class="filters">
+    <form id="filters" class="filters" aria-label="Gallery filters">
       <label>Sort <select id="sort">
         <option value="newest">Recently downloaded</option>
         <option value="oldest">Oldest downloaded</option>
@@ -359,6 +393,9 @@
         <option value="rating_confidence">Lowest rating confidence</option>
         <option value="shuffle">Seeded shuffle</option>
       </select></label>
+      <label id="nsfw-subcategory-field" hidden>NSFW category
+        <select id="nsfw-subcategory" disabled><option value="">All NSFW</option></select>
+      </label>
       <label>Source <select id="source"><option value="">All</option></select></label>
       <label>Orientation <select id="orientation"><option value="">All</option></select></label>
       <label>Resolution <select id="bucket"><option value="">All</option></select></label>
@@ -378,19 +415,21 @@
       <button id="clear" type="button">Clear</button>
     </form>
 
-    <section class="transfer-bar" aria-label="Transfer selected wallpapers">
-      <strong id="selection-count">0 selected</strong>
+    <section id="transfer-bar" class="transfer-bar" aria-label="Transfer selected wallpapers">
+      <strong id="selection-count" aria-live="polite" aria-atomic="true">0 selected</strong>
       <button id="select-loaded" type="button" disabled>Select loaded</button>
-      <button id="clear-selection" type="button" disabled>Clear</button>
-      <span class="spacer"></span>
-      <label>Send copies to <select id="transfer-target" disabled>
-        <option value="">Loading targets…</option>
-      </select></label>
-      <button id="send-selected" class="primary" type="button" disabled>Send selected</button>
-      <span id="transfer-status" class="transfer-status" aria-live="polite">Loading transfer service…</span>
+      <div id="transfer-options" class="transfer-options" hidden>
+        <button id="clear-selection" type="button" disabled>Clear</button>
+        <span class="spacer"></span>
+        <label>Send copies to <select id="transfer-target" disabled>
+          <option value="">Loading targets…</option>
+        </select></label>
+        <button id="send-selected" class="primary" type="button" disabled>Send selected</button>
+        <span id="transfer-status" class="transfer-status" aria-live="polite">Loading transfer service…</span>
+      </div>
     </section>
 
-    <section id="grid" class="grid" aria-live="polite"></section>
+    <section id="grid" class="grid" aria-label="Wallpaper results"></section>
     <div id="scroll-sentinel" class="scroll-sentinel" aria-hidden="true"></div>
     <section class="scroll-footer" aria-label="Infinite scroll status" aria-live="polite" aria-atomic="true">
       <span id="feed-status" class="count">Loading collection…</span>
@@ -412,6 +451,7 @@
         </div>
         <div id="detail-status" class="detail-status" aria-live="polite"></div>
         <div class="detail-actions">
+          <button id="detail-load-original" class="primary" type="button">Load full resolution</button>
           <a id="detail-original" class="primary" target="_blank" rel="noopener">Open original</a>
           <span id="detail-rating-badge" class="tag"></span>
         </div>
@@ -443,8 +483,10 @@
   (function () {
     'use strict';
     var BATCH_SIZE = 48;
+    var LIBRARY_RESPONSE_SCHEMA = 3;
     var MAX_SHUFFLE_SEED = 2147483647;
     var RATINGS = ['all', 'sfw', 'suggestive', 'nsfw', 'unknown'];
+    var NSFW_SUBCATEGORIES = ['', 'nudity', 'explicit', 'fetish', 'unspecified'];
     var SORTS = [
       'newest', 'oldest', 'resolution_desc', 'resolution_asc', 'size_desc',
       'size_asc', 'franchise', 'source', 'filename', 'path', 'least_tagged',
@@ -456,15 +498,15 @@
     var DENSITIES = ['compact', 'comfortable', 'cinematic'];
     var FITS = ['contain', 'crop'];
     var PRESETS = {
-      'recent': {label: 'Recently added', rating: 'sfw', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'newest'},
-      'desktop-4k': {label: 'Desktop 4K', rating: 'sfw', source: '', orientation: 'landscape', bucket: '4K', tag: '', franchise: '', sort: 'newest'},
-      'portrait': {label: 'Portrait', rating: 'sfw', source: '', orientation: 'portrait', bucket: '', tag: '', franchise: '', sort: 'newest'},
-      'needs-rating': {label: 'Needs rating', rating: 'unknown', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'rating_confidence'},
-      'least-tagged': {label: 'Least tagged', rating: 'sfw', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'least_tagged'},
-      'shuffle': {label: 'Shuffle', rating: 'sfw', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'shuffle'}
+      'recent': {label: 'Recently added', rating: 'sfw', nsfw_subcategory: '', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'newest'},
+      'desktop-4k': {label: 'Desktop 4K', rating: 'sfw', nsfw_subcategory: '', source: '', orientation: 'landscape', bucket: '4K', tag: '', franchise: '', sort: 'newest'},
+      'portrait': {label: 'Portrait', rating: 'sfw', nsfw_subcategory: '', source: '', orientation: 'portrait', bucket: '', tag: '', franchise: '', sort: 'newest'},
+      'needs-rating': {label: 'Needs rating', rating: 'unknown', nsfw_subcategory: '', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'rating_confidence'},
+      'least-tagged': {label: 'Least tagged', rating: 'sfw', nsfw_subcategory: '', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'least_tagged'},
+      'shuffle': {label: 'Shuffle', rating: 'sfw', nsfw_subcategory: '', source: '', orientation: '', bucket: '', tag: '', franchise: '', sort: 'shuffle'}
     };
     var state = {
-      rating: 'sfw', source: '', orientation: '', bucket: '', tag: '',
+      rating: 'sfw', nsfw_subcategory: '', source: '', orientation: '', bucket: '', tag: '',
       franchise: '', sort: 'newest', seed: null, density: 'comfortable',
       fit: 'contain', preset: ''
     };
@@ -493,6 +535,8 @@
     var transferMaxItems = 100;
     var activeTransferJob = null;
     var transferPollTimer = null;
+    var transferBar = document.getElementById('transfer-bar');
+    var transferOptions = document.getElementById('transfer-options');
     var selectionCount = document.getElementById('selection-count');
     var selectLoadedButton = document.getElementById('select-loaded');
     var clearSelectionButton = document.getElementById('clear-selection');
@@ -502,6 +546,8 @@
     var tagInput = document.getElementById('tag');
     var tagOptions = document.getElementById('tag-options');
     var tagAssistStatus = document.getElementById('tag-assist-status');
+    var nsfwSubcategoryField = document.getElementById('nsfw-subcategory-field');
+    var nsfwSubcategorySelect = document.getElementById('nsfw-subcategory');
     var autocompleteTimer = null;
     var autocompleteController = null;
     var autocompleteGeneration = 0;
@@ -510,11 +556,14 @@
     var detailDialog = document.getElementById('detail-dialog');
     var detailTitle = document.getElementById('detail-title');
     var detailImage = document.getElementById('detail-image');
+    var detailLoadOriginal = document.getElementById('detail-load-original');
     var detailOriginal = document.getElementById('detail-original');
     var detailStatus = document.getElementById('detail-status');
     var detailItemId = null;
     var detailOpener = null;
     var detailLoadingOriginal = false;
+    var detailImageGeneration = 0;
+    var detailOriginalLoader = null;
     var detailClosing = false;
     var fallbackBodyOverflow = '';
     var fallbackSurfaceState = [];
@@ -548,10 +597,22 @@
       if (state.sort === 'shuffle' && !validSeed(state.seed)) state.seed = newShuffleSeed();
     }
 
+    function normalizeNsfwSubcategory() {
+      if (state.rating !== 'nsfw') {
+        state.nsfw_subcategory = '';
+      } else {
+        state.nsfw_subcategory = allowed(
+          String(state.nsfw_subcategory || '').toLowerCase(),
+          NSFW_SUBCATEGORIES,
+          ''
+        );
+      }
+    }
+
     function presetMatches(identifier) {
       var preset = PRESETS[identifier];
       if (!preset) return false;
-      var matches = ['rating', 'source', 'orientation', 'bucket', 'tag', 'franchise', 'sort'].every(function (key) {
+      var matches = ['rating', 'nsfw_subcategory', 'source', 'orientation', 'bucket', 'tag', 'franchise', 'sort'].every(function (key) {
         return state[key] === preset[key];
       });
       return matches && (identifier !== 'shuffle' || Boolean(validSeed(state.seed)));
@@ -564,6 +625,11 @@
     function readUrl() {
       var p = new URLSearchParams(location.search);
       state.rating = allowed(p.get('rating') || 'sfw', RATINGS, 'sfw');
+      state.nsfw_subcategory = allowed(
+        String(p.get('nsfw_subcategory') || '').toLowerCase(),
+        NSFW_SUBCATEGORIES,
+        ''
+      );
       state.source = allowed(p.get('source') || '', SOURCES, '');
       state.orientation = allowed(p.get('orientation') || '', ORIENTATIONS, '');
       state.bucket = allowed(p.get('bucket') || '', BUCKETS, '');
@@ -574,16 +640,23 @@
       state.density = allowed(p.get('density') || 'comfortable', DENSITIES, 'comfortable');
       state.fit = allowed(p.get('fit') || 'contain', FITS, 'contain');
       state.preset = Object.prototype.hasOwnProperty.call(PRESETS, p.get('preset')) ? p.get('preset') : '';
+      normalizeNsfwSubcategory();
       ensureShuffleSeed();
       reconcilePreset();
     }
 
-    function syncUrl() {
+    function syncUrl(mode) {
       reconcilePreset();
+      normalizeNsfwSubcategory();
       ensureShuffleSeed();
       var url = new URL(location.href);
       if (state.rating === 'sfw') url.searchParams.delete('rating');
       else url.searchParams.set('rating', state.rating);
+      if (state.rating === 'nsfw' && state.nsfw_subcategory) {
+        url.searchParams.set('nsfw_subcategory', state.nsfw_subcategory);
+      } else {
+        url.searchParams.delete('nsfw_subcategory');
+      }
       ['source', 'orientation', 'bucket', 'tag', 'franchise'].forEach(function (key) {
         if (state[key]) url.searchParams.set(key, state[key]);
         else url.searchParams.delete(key);
@@ -600,7 +673,15 @@
       else url.searchParams.delete('preset');
       url.searchParams.delete('offset');
       url.searchParams.delete('limit');
-      history.replaceState(null, '', url);
+      var currentKey = location.pathname + location.search + location.hash;
+      var nextKey = url.pathname + url.search + url.hash;
+      if (mode === 'push') {
+        if (nextKey === currentKey) return false;
+        history.pushState(null, '', url);
+      } else {
+        history.replaceState(null, '', url);
+      }
+      return true;
     }
 
     function applyPresentation() {
@@ -608,11 +689,14 @@
       document.body.dataset.fit = state.fit;
       document.getElementById('density').value = state.density;
       document.getElementById('fit').value = state.fit;
-      syncUrl();
     }
 
     function updateControls() {
+      normalizeNsfwSubcategory();
       document.getElementById('sort').value = state.sort;
+      nsfwSubcategorySelect.value = state.nsfw_subcategory;
+      nsfwSubcategoryField.hidden = state.rating !== 'nsfw';
+      nsfwSubcategorySelect.disabled = state.rating !== 'nsfw';
       document.getElementById('source').value = state.source;
       document.getElementById('orientation').value = state.orientation;
       document.getElementById('bucket').value = state.bucket;
@@ -629,10 +713,21 @@
       paintRatingTabs();
     }
 
+    function commitNavigation(resetCollection) {
+      updateControls();
+      syncUrl('push');
+      if (resetCollection) resetFeed();
+    }
+
     function setSelect(id, values, selected) {
       var select = document.getElementById(id);
       while (select.options.length > 1) select.remove(1);
-      var allowlists = {source: SOURCES, orientation: ORIENTATIONS, bucket: BUCKETS};
+      var allowlists = {
+        source: SOURCES,
+        orientation: ORIENTATIONS,
+        bucket: BUCKETS,
+        'nsfw-subcategory': NSFW_SUBCATEGORIES
+      };
       Object.keys(values || {}).filter(function (value) {
         return !allowlists[id] || allowlists[id].includes(value);
       }).forEach(function (value) {
@@ -648,7 +743,9 @@
       var total = facets ? Number(facets.indexed_images || 0) : 0;
       document.querySelectorAll('.rating-tabs button[data-rating]').forEach(function (button) {
         var key = button.dataset.rating;
-        button.classList.toggle('active', key === state.rating);
+        var active = key === state.rating;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
         var count = key === 'all' ? total : Number((facets && facets.ratings[key]) || 0);
         button.querySelector('.count').textContent = '(' + count.toLocaleString() + ')';
       });
@@ -658,7 +755,11 @@
       var response = await fetch('/api/library/status', {cache: 'no-store'});
       var data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || 'Index status failed');
+      if (!data.facets || Number(data.facets.schema_version) !== LIBRARY_RESPONSE_SCHEMA) {
+        throw new Error('Unsupported library response schema');
+      }
       facets = data.facets;
+      setSelect('nsfw-subcategory', facets.nsfw_subcategories, state.nsfw_subcategory);
       setSelect('source', facets.sources, state.source);
       setSelect('orientation', facets.orientations, state.orientation);
       setSelect('bucket', facets.buckets, state.bucket);
@@ -674,18 +775,18 @@
     function applyPreset(identifier) {
       var preset = PRESETS[identifier];
       if (!preset) return;
-      ['rating', 'source', 'orientation', 'bucket', 'tag', 'franchise', 'sort'].forEach(function (key) {
+      ['rating', 'nsfw_subcategory', 'source', 'orientation', 'bucket', 'tag', 'franchise', 'sort'].forEach(function (key) {
         state[key] = preset[key];
       });
       state.preset = identifier;
       ensureShuffleSeed();
       closeAutocomplete();
-      updateControls();
-      resetFeed();
+      commitNavigation(true);
     }
 
     function clearNavigationFilters() {
       state.rating = 'sfw';
+      state.nsfw_subcategory = '';
       state.source = '';
       state.orientation = '';
       state.bucket = '';
@@ -694,8 +795,7 @@
       state.sort = 'newest';
       state.preset = '';
       closeAutocomplete();
-      updateControls();
-      resetFeed();
+      commitNavigation(true);
     }
 
     function removeFilter(key) {
@@ -704,8 +804,7 @@
       else if (key === 'preset') state.preset = '';
       else state[key] = '';
       reconcilePreset();
-      updateControls();
-      resetFeed();
+      commitNavigation(true);
     }
 
     function renderActiveFilterChips() {
@@ -714,6 +813,7 @@
       var chips = [];
       if (state.preset) chips.push(['preset', 'View: ' + PRESETS[state.preset].label]);
       if (state.rating !== 'sfw') chips.push(['rating', 'Rating: ' + state.rating]);
+      if (state.nsfw_subcategory) chips.push(['nsfw_subcategory', 'NSFW category: ' + state.nsfw_subcategory]);
       if (state.source) chips.push(['source', 'Source: ' + state.source]);
       if (state.orientation) chips.push(['orientation', 'Orientation: ' + state.orientation]);
       if (state.bucket) chips.push(['bucket', 'Resolution: ' + state.bucket]);
@@ -746,6 +846,9 @@
     function updateSelectionUi() {
       var count = selectedIds.size;
       selectionCount.textContent = count.toLocaleString() + ' selected';
+      var transferExpanded = count > 0 || Boolean(activeTransferJob);
+      transferBar.dataset.expanded = transferExpanded ? 'true' : 'false';
+      transferOptions.hidden = !transferExpanded;
       clearSelectionButton.disabled = count === 0 || Boolean(activeTransferJob);
       var loaded = transferableLoadedItems();
       var allLoadedSelected = loaded.length > 0 && loaded.every(function (item) {
@@ -897,6 +1000,9 @@
     function apiUrl(offset) {
       var url = new URL('/api/library', location.origin);
       if (state.rating !== 'all') url.searchParams.set('rating', state.rating);
+      if (state.rating === 'nsfw' && state.nsfw_subcategory) {
+        url.searchParams.set('nsfw_subcategory', state.nsfw_subcategory);
+      }
       ['source', 'orientation', 'bucket', 'tag', 'franchise'].forEach(function (key) {
         if (state[key]) url.searchParams.set(key, state[key]);
       });
@@ -942,8 +1048,7 @@
       state.tag = exact;
       reconcilePreset();
       closeAutocomplete();
-      updateControls();
-      resetFeed();
+      commitNavigation(true);
     }
 
     function renderAutocomplete(items) {
@@ -1228,6 +1333,10 @@
       appendFact('File size', formatBytes(item.size_bytes) || 'unknown');
       appendFact('Extension', item.extension || 'unknown');
       appendFact('Content rating', item.content_rating || 'unknown');
+      appendFact(
+        'NSFW subcategory',
+        item.content_rating === 'nsfw' ? (item.nsfw_subcategory || 'unspecified') : 'Not applicable'
+      );
       var confidence = Number(item.rating_confidence);
       appendFact('Rating confidence', Number.isFinite(confidence) ? Math.round(confidence * 100) + '%' : 'unknown');
       appendFact('Rating basis', item.rating_basis || 'unknown');
@@ -1387,11 +1496,82 @@
       document.getElementById('detail-next').disabled = index < 0 || index >= loadedItemIds.length - 1;
     }
 
+    function renderDetailPreview(item) {
+      detailImageGeneration += 1;
+      var generation = detailImageGeneration;
+      detailOriginalLoader = null;
+      detailLoadingOriginal = false;
+      var image = document.createElement('img');
+      image.id = 'detail-image';
+      image.className = 'detail-image';
+      image.alt = item.filename;
+      image.width = Number(item.width) || 1280;
+      image.height = Number(item.height) || 720;
+      image.hidden = !item.thumbnail_url;
+      image.addEventListener('error', function () {
+        if (generation !== detailImageGeneration || detailItemId !== item.id || detailImage !== image) return;
+        image.removeAttribute('src');
+        image.hidden = true;
+        setDetailStatus(
+          item.original_url ?
+            'Thumbnail could not be loaded. Load full resolution or open the original.' :
+            'Preview could not be loaded.',
+          'error'
+        );
+      }, {once: true});
+      detailImage.replaceWith(image);
+      detailImage = image;
+      if (item.thumbnail_url) image.src = item.thumbnail_url;
+    }
+
     function loadDetailOriginal(item) {
-      if (!dialogIsOpen() || detailItemId !== item.id || !item.original_url) return;
+      if (!dialogIsOpen() || detailItemId !== item.id || !item.original_url || detailLoadingOriginal) return;
+      var generation = detailImageGeneration;
+      var loader = new Image();
+      detailOriginalLoader = loader;
       detailLoadingOriginal = true;
-      setDetailStatus('Loading original on demand…');
-      detailImage.src = item.original_url;
+      detailLoadOriginal.disabled = true;
+      detailLoadOriginal.textContent = 'Loading full resolution…';
+      setDetailStatus('Loading the full-resolution image…');
+      loader.id = 'detail-image';
+      loader.className = 'detail-image';
+      loader.alt = item.filename;
+      loader.width = Number(item.width) || 1280;
+      loader.height = Number(item.height) || 720;
+      loader.onload = function () {
+        if (
+          generation !== detailImageGeneration ||
+          detailItemId !== item.id ||
+          detailOriginalLoader !== loader
+        ) return;
+        detailOriginalLoader = null;
+        detailLoadingOriginal = false;
+        loader.onload = null;
+        loader.onerror = null;
+        detailImage.replaceWith(loader);
+        detailImage = loader;
+        detailLoadOriginal.textContent = 'Full resolution loaded';
+        detailLoadOriginal.disabled = true;
+        setDetailStatus('Full-resolution image loaded.');
+      };
+      loader.onerror = function () {
+        if (
+          generation !== detailImageGeneration ||
+          detailItemId !== item.id ||
+          detailOriginalLoader !== loader
+        ) return;
+        var hasVisiblePreview = !detailImage.hidden && detailImage.hasAttribute('src');
+        detailOriginalLoader = null;
+        detailLoadingOriginal = false;
+        detailLoadOriginal.textContent = 'Retry full resolution';
+        detailLoadOriginal.disabled = false;
+        if (hasVisiblePreview) {
+          setDetailStatus('Full-resolution image could not be loaded; keeping the cached thumbnail.', 'error');
+        } else {
+          setDetailStatus('Full-resolution image could not be loaded, and no thumbnail preview is available.', 'error');
+        }
+      };
+      loader.src = item.original_url;
     }
 
     function openDetail(itemId, opener) {
@@ -1408,18 +1588,15 @@
       renderProviderTags(item);
       renderSuggestions(item);
       document.getElementById('suggestion-status').textContent = '';
-      detailLoadingOriginal = false;
-      detailImage.removeAttribute('src');
-      detailImage.alt = item.filename;
-      detailImage.width = Number(item.width) || 1280;
-      detailImage.height = Number(item.height) || 720;
-      detailImage.hidden = !item.thumbnail_url && !item.original_url;
+      renderDetailPreview(item);
+      detailLoadOriginal.textContent = 'Load full resolution';
+      detailLoadOriginal.disabled = false;
+      detailLoadOriginal.hidden = !item.original_url;
       detailOriginal.removeAttribute('href');
       detailOriginal.hidden = !item.original_url;
-      if (item.thumbnail_url) detailImage.src = item.thumbnail_url;
       if (!item.exists) setDetailStatus('The indexed canonical file is currently missing.', 'error');
-      else if (!item.thumbnail_url) setDetailStatus('Thumbnail unavailable. The original will load after the dialog opens.');
-      else setDetailStatus('Thumbnail preview. Opening the original on demand…');
+      else if (!item.thumbnail_url) setDetailStatus('Thumbnail unavailable. Load full resolution or open the original.');
+      else setDetailStatus('Thumbnail preview. Load full resolution only when needed.');
       updateDetailNavigation();
       if (!alreadyOpen) {
         if (typeof detailDialog.showModal === 'function') {
@@ -1446,7 +1623,6 @@
       }
       if (item.original_url) {
         detailOriginal.href = item.original_url;
-        window.requestAnimationFrame(function () { loadDetailOriginal(item); });
       }
     }
 
@@ -1468,9 +1644,13 @@
         });
         fallbackSurfaceState = [];
       }
+      detailImageGeneration += 1;
+      detailOriginalLoader = null;
       detailImage.removeAttribute('src');
       detailOriginal.removeAttribute('href');
       detailLoadingOriginal = false;
+      detailLoadOriginal.textContent = 'Load full resolution';
+      detailLoadOriginal.disabled = false;
       detailItemId = null;
       detailOpener = null;
       detailDialog.dataset.restoreFocus = 'true';
@@ -1571,7 +1751,6 @@
       paintRatingTabs();
       updateSelectionUi();
       if (dialogIsOpen()) updateDetailNavigation();
-      syncUrl();
       updateFeedStatus();
       maybeFillViewport();
     }
@@ -1589,6 +1768,9 @@
         var response = await fetch(apiUrl(offset), options);
         var data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || 'Library query failed');
+        if (Number(data.schema_version) !== LIBRARY_RESPONSE_SCHEMA) {
+          throw new Error('Unsupported library response schema');
+        }
         if (generation !== requestGeneration) return;
         loading = false;
         appendBatch(data);
@@ -1618,7 +1800,6 @@
       loadedItemIds.length = 0;
       grid.replaceChildren();
       updateSelectionUi();
-      syncUrl();
       loadMore();
     }
 
@@ -1633,12 +1814,20 @@
       observer.observe(sentinel);
     }
 
+    function hydrateFromHistory() {
+      readUrl();
+      closeAutocomplete();
+      updateControls();
+      syncUrl('replace');
+      resetFeed();
+    }
+
     document.querySelectorAll('.rating-tabs button[data-rating]').forEach(function (button) {
       button.addEventListener('click', function () {
         state.rating = allowed(button.dataset.rating, RATINGS, 'sfw');
+        normalizeNsfwSubcategory();
         reconcilePreset();
-        updateControls();
-        resetFeed();
+        commitNavigation(true);
       });
     });
     document.querySelectorAll('[data-preset]').forEach(function (button) {
@@ -1648,16 +1837,15 @@
       state.sort = 'shuffle';
       state.seed = newShuffleSeed();
       reconcilePreset();
-      updateControls();
-      resetFeed();
+      commitNavigation(true);
     });
     document.getElementById('density').addEventListener('change', function () {
       state.density = allowed(this.value, DENSITIES, 'comfortable');
-      applyPresentation();
+      commitNavigation(false);
     });
     document.getElementById('fit').addEventListener('change', function () {
       state.fit = allowed(this.value, FITS, 'contain');
-      applyPresentation();
+      commitNavigation(false);
     });
     document.getElementById('reveal').addEventListener('change', function () {
       document.body.dataset.revealNsfw = this.checked ? 'true' : 'false';
@@ -1667,27 +1855,32 @@
       state.source = allowed(document.getElementById('source').value, SOURCES, '');
       state.orientation = allowed(document.getElementById('orientation').value, ORIENTATIONS, '');
       state.bucket = allowed(document.getElementById('bucket').value, BUCKETS, '');
+      state.nsfw_subcategory = state.rating === 'nsfw' ?
+        allowed(nsfwSubcategorySelect.value, NSFW_SUBCATEGORIES, '') : '';
       state.tag = exactText(tagInput.value);
       state.franchise = exactText(document.getElementById('franchise').value);
       reconcilePreset();
       closeAutocomplete();
-      updateControls();
-      resetFeed();
+      commitNavigation(true);
     });
     document.getElementById('clear').addEventListener('click', function () {
-      state.source = state.orientation = state.bucket = state.tag = state.franchise = '';
+      state.nsfw_subcategory = state.source = state.orientation = state.bucket = state.tag = state.franchise = '';
       reconcilePreset();
       closeAutocomplete();
-      updateControls();
-      resetFeed();
+      commitNavigation(true);
     });
     document.getElementById('clear-all').addEventListener('click', clearNavigationFilters);
     document.getElementById('sort').addEventListener('change', function () {
       state.sort = allowed(this.value, SORTS, 'newest');
       ensureShuffleSeed();
       reconcilePreset();
-      updateControls();
-      resetFeed();
+      commitNavigation(true);
+    });
+    nsfwSubcategorySelect.addEventListener('change', function () {
+      state.nsfw_subcategory = state.rating === 'nsfw' ?
+        allowed(this.value, NSFW_SUBCATEGORIES, '') : '';
+      reconcilePreset();
+      commitNavigation(true);
     });
     tagInput.addEventListener('input', queueAutocomplete);
     tagInput.addEventListener('keydown', handleAutocompleteKey);
@@ -1731,6 +1924,10 @@
     document.getElementById('detail-close').addEventListener('click', function () { closeDetail(true); });
     document.getElementById('detail-prev').addEventListener('click', function () { openAdjacentDetail(-1); });
     document.getElementById('detail-next').addEventListener('click', function () { openAdjacentDetail(1); });
+    detailLoadOriginal.addEventListener('click', function () {
+      var item = loadedItems.get(detailItemId);
+      if (item) loadDetailOriginal(item);
+    });
     detailDialog.addEventListener('close', finalizeDetailClose);
     detailDialog.addEventListener('cancel', function (event) {
       event.preventDefault();
@@ -1752,26 +1949,10 @@
         openAdjacentDetail(1);
       }
     });
-    detailImage.addEventListener('load', function () {
-      if (detailLoadingOriginal) {
-        detailLoadingOriginal = false;
-        setDetailStatus('Original loaded on demand.');
-      }
-    });
-    detailImage.addEventListener('error', function () {
-      var item = loadedItems.get(detailItemId);
-      if (detailLoadingOriginal && item && item.thumbnail_url) {
-        detailLoadingOriginal = false;
-        setDetailStatus('Original could not be loaded; showing the cached thumbnail.', 'error');
-        detailImage.src = item.thumbnail_url;
-      } else {
-        detailLoadingOriginal = false;
-        setDetailStatus('Preview could not be loaded.', 'error');
-      }
-    });
     try {
       document.getElementById('suggestion-reviewer').value = sessionStorage.getItem('webgallery.suggestionReviewer') || '';
     } catch (error) {}
+    window.addEventListener('popstate', hydrateFromHistory);
     window.addEventListener('beforeunload', function () {
       if (transferPollTimer) window.clearTimeout(transferPollTimer);
       if (autocompleteTimer) window.clearTimeout(autocompleteTimer);
@@ -1780,6 +1961,7 @@
 
     readUrl();
     updateControls();
+    syncUrl('replace');
     startInfiniteScroll();
     loadStatus().catch(function (error) {
       statusEl.className = 'banner error';

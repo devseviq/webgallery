@@ -28,7 +28,7 @@ derived from it) has its own user-site editable install, and its top-level
 package is also named `dl_engine`. Invoking the global `python` instead of
 this project's venv silently imports that sibling project's code — whose
 `DB_SCHEMA_VERSION` is `2`, matching the live database it maintains, not this
-schema-3 gallery index. Confirm the resolved module before any live command:
+schema-4 gallery index. Confirm the resolved module before any live command:
 
 ```powershell
 F:\Wallpapers\webgallery\.venv\Scripts\python.exe -c "import dl_engine; print(dl_engine.__file__)"
@@ -38,14 +38,14 @@ It must print a path under this worktree's `src\dl_engine`. If a command below
 is ever run with a bare `python` instead of this venv's interpreter and prints
 `F:\Wallpapers\dl-engine\src\dl_engine\__init__.py`, it silently ran the
 sibling project's code, not this one — expect false `schema-version-mismatch`
-issues if pointed at a schema-3 index for that reason alone.
+issues if pointed at a schema-4 index for that reason alone.
 
 **Database-ownership boundary (confirmed 2026-07-20):**
 `F:\Wallpapers\wallpaper_library.sqlite` remains a schema-2 maintenance index
 owned by the sibling `F:\Wallpapers\dl-engine` project and its scheduled queue
 maintenance. Webgallery must not migrate that file in place: the sibling
-maintainer still writes schema version 2 and could later invalidate a schema-3
-publication. Use a separately owned schema-3 database such as
+maintainer still writes schema version 2 and could later invalidate a schema-4
+publication. Use a separately owned schema-4 database such as
 `F:\Wallpapers\webgallery_library.sqlite`. All commands below use that separate
 path unless they explicitly say they are reading a legacy database.
 
@@ -99,18 +99,21 @@ a busy timeout so read-only consumers continue to see the last committed
 snapshot during a rebuild. WAL and SHM siblings are part of the database and
 must not be deleted independently while a process is using it.
 
-## Schema 3
+## Schema 4
 
-Schema 3 is an additive migration of the disposable index. The migration
+Schema 4 is an additive migration of the disposable gallery index. A schema-3
+database receives the validated `images.nsfw_subcategory` column, its
+`(content_rating, nsfw_subcategory, id)` index, an authoritative-tag backfill,
+and an NSFW-only facet in one transaction. The migration
 rejects future or contradictory version markers before writing. Schema and
 derived publication happen in one transaction, and `PRAGMA user_version` plus
-`schema_metadata.schema_version` are written last. A schema-2 database is
-backfilled from its current purity and authoritative `image_tags` without
-changing sidecars, raw provider ledgers, tags, or enrichment progress.
+`schema_metadata.schema_version` are written last. Older supported schema-2
+databases are also backfilled without changing sidecars, raw provider ledgers,
+tags, or enrichment progress.
 
 | Table | Purpose |
 |---|---|
-| `images` | File/source evidence plus materialized `content_rating`, `rating_confidence`, `rating_basis`, stable JSON reasons, and authoritative `tag_count`. |
+| `images` | File/source evidence plus materialized `content_rating`, `nsfw_subcategory`, `rating_confidence`, `rating_basis`, stable JSON reasons, and authoritative `tag_count`. Non-NSFW rows are constrained to `unspecified`. |
 | `tags` / `image_tags` | Typed, source-qualified authoritative tags and per-image provenance. |
 | `library_facets` | Snapshot counts for rating, source, orientation, resolution bucket, enrichment status, tag-count bucket, provider coverage, and tag provenance. |
 | `tag_suggestions` | Review-only labels with confidence, generator/model/provenance, status, timestamps, reviewer, and note. |
@@ -122,6 +125,13 @@ single publication path after ingest and authoritative provider-tag changes.
 It does not commit; the caller owns the transaction. It calls the unchanged
 conservative classifier using only `tags`/`image_tags`. Suggestions at every
 review status are excluded, and missing evidence stays `unknown`, never SFW.
+NSFW subcategory precedence is `explicit` > `fetish` > `nudity` >
+`unspecified`; second-axis terms alone never bypass the overall-rating gate.
+Fresh schema-4 tables enforce the allowed domain and non-NSFW cross-field
+invariant with SQL `CHECK` constraints. SQLite cannot add the table-level
+cross-field check in place, so schema-3 migrations install idempotent
+`BEFORE INSERT`/`BEFORE UPDATE` triggers after adding the column. Transactional
+backfill and exhaustive verification provide the migration and drift checks.
 
 ## Read-only verification
 
@@ -139,10 +149,11 @@ $verifyExit = $LASTEXITCODE
 ```
 
 Verification opens SQLite in `mode=ro` and never invokes migration. It checks
-quick-check, foreign keys, required schema-3 columns/tables/version markers,
+quick-check, foreign keys, required schema-4 columns/tables/version markers,
 filesystem/index/sidecar agreement, canonical layout and SHA identity,
-materialized rating/count parity, stable JSON reasons, confidence bounds,
-suggestion decisions, and the complete facet snapshot. Exit codes are `0` for
+materialized rating/subcategory/count parity, the non-NSFW invariant, stable
+JSON reasons, confidence bounds, suggestion decisions, and the complete facet
+snapshot. Exit codes are `0` for
 healthy, `1` for invariant failures, and `2` for incompatible/missing inputs or
 invalid command use.
 
@@ -162,6 +173,10 @@ Read-only query and stats modes require only the explicit database path:
 
 & $python -m dl_engine.index_library `
   --db-path $galleryDb `
+  --query "rating=nsfw nsfw_subcategory=fetish sort=newest"
+
+& $python -m dl_engine.index_library `
+  --db-path $galleryDb `
   --query "sort=least_tagged limit=250"
 
 & $python -m dl_engine.index_library `
@@ -169,17 +184,21 @@ Read-only query and stats modes require only the explicit database path:
   --query "sort=shuffle shuffle_seed=42 limit=250 offset=250"
 ```
 
-Filters include orientation, franchise, bucket, source, exact tag, and
-materialized content rating. Stable sorts include the existing file/date/
+Filters include orientation, franchise, bucket, source, exact tag,
+materialized content rating, and the four NSFW subcategories. A subcategory
+filter is rejected unless `rating=nsfw`. Stable sorts include the existing file/date/
 resolution/size/source orders plus `least_tagged`, `rating_confidence`, and
 `shuffle`. Shuffle requires an integer seed from 0 through 2147483647; the same
 seed/filter/page parameters reproduce the same order without duplicates.
 Offset pagination remains for this campaign; measured keyset pagination is a
 follow-up.
 
-A normal page performs one image SELECT, one `IN` query for every returned
-typed provider tag, and one batch suggestion query. It does not aggregate the
-tag table for rating filters or issue one tag query per card.
+A normal API page starts an explicit read transaction, then performs one image
+SELECT, one `IN` query for every returned typed provider tag, and one batch
+suggestion query. It does not aggregate the tag table for rating filters or
+issue one tag query per card. The count, image rows, tags, and suggestions
+therefore share one WAL snapshot; the connection rolls the read transaction
+back before closing.
 `counted_tag_autocomplete` validates prefix length 1-120 and limit 1-50,
 treats `%`, `_`, and backslash literally, counts distinct images, and orders by
 count then stable name/type/source/provenance. Suggestions are never included.

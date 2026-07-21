@@ -157,7 +157,7 @@ class LibraryBrowserTests(unittest.TestCase):
             self.library,
             {"rating": "nsfw", "limit": "10"},
         )
-        self.assertEqual(page["schema_version"], 2)
+        self.assertEqual(page["schema_version"], 3)
         self.assertEqual(
             [item["filename"] for item in page["items"]],
             ["adult.jpg", "tagged.jpg"],
@@ -175,6 +175,7 @@ class LibraryBrowserTests(unittest.TestCase):
             self.assertIn("tag_count", item)
             self.assertIn("enrichment_status", item)
             self.assertIn("provider_coverage", item)
+            self.assertEqual(item["nsfw_subcategory"], "nudity")
 
         self.assert_path_free(page)
         self.assertEqual(set(page["index"]), {"mtime", "indexed_images"})
@@ -193,6 +194,117 @@ class LibraryBrowserTests(unittest.TestCase):
         )
         self.assertFalse(second["page"]["has_more"])
         self.assertNotEqual(first["items"][0]["id"], second["items"][0]["id"])
+
+    def test_query_page_filters_and_echoes_nsfw_subcategory(self) -> None:
+        page = library_browser.query_library_page(
+            self.db,
+            self.library,
+            {"rating": "NSFW", "nsfw_subcategory": "NUDITY", "limit": "10"},
+        )
+        self.assertEqual(page["filters"]["rating"], "nsfw")
+        self.assertEqual(page["filters"]["nsfw_subcategory"], "nudity")
+        self.assertEqual(
+            [item["filename"] for item in page["items"]],
+            ["adult.jpg", "tagged.jpg"],
+        )
+        with self.assertRaisesRegex(ValueError, "requires rating=nsfw"):
+            library_browser.query_library_page(
+                self.db, self.library, {"nsfw_subcategory": "nudity"}
+            )
+        with self.assertRaisesRegex(ValueError, "requires rating=nsfw"):
+            library_browser.query_library_page(
+                self.db,
+                self.library,
+                {"rating": "sfw", "nsfw_subcategory": "nudity"},
+            )
+        with self.assertRaisesRegex(ValueError, "nsfw_subcategory"):
+            library_browser.query_library_page(
+                self.db,
+                self.library,
+                {"rating": "nsfw", "nsfw_subcategory": "other"},
+            )
+
+    def test_query_page_pins_rows_tags_and_suggestions_to_one_wal_snapshot(self) -> None:
+        original_open = idx.open_index_read_only
+        committed = False
+
+        class SnapshotConnection:
+            def __init__(inner_self, connection: sqlite3.Connection) -> None:
+                inner_self.connection = connection
+
+            def execute(inner_self, sql: str, parameters: object = ()):
+                nonlocal committed
+                cursor = inner_self.connection.execute(sql, parameters)
+                if not committed and sql.startswith("SELECT images.* FROM images"):
+                    writer = sqlite3.connect(self.db, timeout=5)
+                    try:
+                        writer.execute("PRAGMA foreign_keys=ON")
+                        writer.execute(
+                            "INSERT INTO tags "
+                            "(id,name,source,tag_type,provenance) "
+                            "VALUES (900001,'snapshot tag','zerochan','topic','fixture')"
+                        )
+                        writer.execute(
+                            "INSERT INTO image_tags(image_id,tag_id,provenance) "
+                            "VALUES (?,900001,'fixture')",
+                            (self.unknown_id,),
+                        )
+                        writer.execute(
+                            "INSERT INTO tag_suggestions "
+                            "(image_id,label,normalized_label,confidence,generator,"
+                            "model_version,provenance,review_status,created_at) "
+                            "VALUES (?,'snapshot suggestion','snapshot suggestion',"
+                            "0.8,'snapshot-writer','1','fixture','pending','now')",
+                            (self.unknown_id,),
+                        )
+                        writer.commit()
+                    finally:
+                        writer.close()
+                    committed = True
+                return cursor
+
+            def rollback(inner_self) -> None:
+                inner_self.connection.rollback()
+
+            def close(inner_self) -> None:
+                inner_self.connection.close()
+
+        def wrapped_open(db_path: Path) -> SnapshotConnection:
+            return SnapshotConnection(original_open(db_path))
+
+        with mock.patch.object(
+            idx, "open_index_read_only", side_effect=wrapped_open
+        ):
+            page = library_browser.query_library_page(
+                self.db, self.library, {"rating": "unknown", "limit": "10"}
+            )
+
+        self.assertTrue(committed)
+        item = next(item for item in page["items"] if item["id"] == self.unknown_id)
+        self.assertEqual(item["tags"], [])
+        self.assertNotIn(
+            "snapshot-writer",
+            {suggestion["generator"] for suggestion in item["tag_suggestions"]},
+        )
+        conn = original_open(self.db)
+        try:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM image_tags WHERE image_id=?",
+                    (self.unknown_id,),
+                ).fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM tag_suggestions "
+                    "WHERE image_id=? AND generator='snapshot-writer'",
+                    (self.unknown_id,),
+                ).fetchone()[0],
+                1,
+            )
+        finally:
+            conn.close()
 
     def test_query_page_remains_readable_during_wal_write_transaction(self) -> None:
         writer = sqlite3.connect(self.db)
@@ -302,6 +414,10 @@ class LibraryBrowserTests(unittest.TestCase):
             facets["ratings"],
             {"sfw": 1, "suggestive": 1, "nsfw": 2, "unknown": 1},
         )
+        self.assertEqual(
+            facets["nsfw_subcategories"],
+            {"nudity": 2, "explicit": 0, "fetish": 0, "unspecified": 0},
+        )
         self.assertEqual(facets["indexed_images"], 5)
         self.assertEqual(facets["sources"]["wallhaven"], 3)
         self.assertEqual(
@@ -358,7 +474,7 @@ class LibraryBrowserTests(unittest.TestCase):
 
     def test_counted_autocomplete_is_typed_and_excludes_suggestions(self) -> None:
         payload = library_browser.tag_autocomplete(self.db, "nu", 20)
-        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["schema_version"], 3)
         self.assertEqual(payload["prefix"], "nu")
         self.assertEqual(
             payload["items"],
@@ -386,6 +502,7 @@ class LibraryBrowserTests(unittest.TestCase):
         self.assertEqual(item["tags"], [])
         self.assertEqual(item["tag_count"], 0)
         self.assertEqual(item["content_rating"], "unknown")
+        self.assertEqual(item["nsfw_subcategory"], "unspecified")
         self.assertEqual(
             {suggestion["review_status"] for suggestion in item["tag_suggestions"]},
             {"pending", "accepted", "rejected"},
