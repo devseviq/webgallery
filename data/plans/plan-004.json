@@ -1,0 +1,648 @@
+{
+  "id": "plan-004",
+  "schema_version": 1,
+  "artifact_version": 1,
+  "created_at": "2026-07-21T00:09:23+00:00",
+  "status": "executed",
+  "description": "Package a fail-closed schema-4 gallery-index publication workflow with candidate build and manifest validation, an authoritative SND-HOST queue/writer hold, recoverable atomic activation, post-publication verification, and rollback while preserving legacy 8090 until an explicit cutover.",
+  "slug": "package-a-fail-closed",
+  "planner_kind": "planner-refactor",
+  "source_discovery_docs": [
+    "docs/discovery-picture-category-navigation.md"
+  ],
+  "source_roadmap": "docs/GALLERY_ROADMAP.md",
+  "phase": "6 Packaging",
+  "behavioral_invariants": [
+    "Canonical images, sidecars, provider ledgers, queue records, and the sibling schema-2 wallpaper_library.sqlite are never rewritten by gallery publication.",
+    "Candidate preparation or verification failure leaves the canonical schema-3 gallery database and legacy 8090 listener unchanged.",
+    "Publication fails closed unless SND-HOST identity, queue hold, zero descendants/index writers, stable DB-WAL-SHM fingerprints, verified schema-4 candidate identity, and stopped cutover listener are proven."
+  ],
+  "rollback_strategy": "Retain a hashed same-volume backup of the canonical DB set, restore it automatically on activation or post-publish verification failure, and release any queue hold only after the canonical read-only contract passes.",
+  "legacy_status": "",
+  "next_letter": "wpm",
+  "agents": [
+    {
+      "letter": "wpj",
+      "name": "define-publication-contract",
+      "scope": "Define the fail-closed publication state machine, manifest schema, queue-hold proof, candidate identity, activation, verification, and rollback contracts without changing runtime behavior.",
+      "deps": [],
+      "files": [
+        "schemas/gallery-publication-manifest.schema.json",
+        "docs/GALLERY_INDEX_PUBLICATION.md"
+      ],
+      "group": 0,
+      "complexity": "medium"
+    },
+    {
+      "letter": "wpk",
+      "name": "implement-gallery-publication",
+      "scope": "Implement candidate preparation, manifest validation, settled writer and listener preflight, same-volume backup and atomic activation, automatic rollback, post-publication verification, and complete exception rollback using explicit paths and WhatIf-first orchestration.",
+      "deps": [
+        "wpj"
+      ],
+      "files": [
+        "src/dl_engine/gallery_publication.py",
+        "src/dl_engine/index_library.py",
+        "scripts/publish_gallery_index.py",
+        "scripts/Invoke-GalleryIndexPublication.ps1"
+      ],
+      "group": 1,
+      "complexity": "high"
+    },
+    {
+      "letter": "wpl",
+      "name": "verify-publication-workflow",
+      "scope": "Add failure-injection and Windows contract tests, reconcile schema-4 operator documentation and roadmap state, and execute repository, candidate, alternate-listener, rollback, and unchanged-live verification without performing an unauthorized cutover.",
+      "deps": [
+        "wpk"
+      ],
+      "files": [
+        "tests/test_gallery_publication.py",
+        "tests/test_gallery_publication_contract.py",
+        "tests/test_index_library.py",
+        "docs/INDEX_LIBRARY.md",
+        "reports/README_live_dashboard.md",
+        "docs/GALLERY_ROADMAP.md",
+        "live-tracker.md"
+      ],
+      "group": 2,
+      "complexity": "high"
+    }
+  ],
+  "groups": {
+    "0": [
+      "wpj"
+    ],
+    "1": [
+      "wpk"
+    ],
+    "2": [
+      "wpl"
+    ]
+  },
+  "conflicts": [
+    "{'files': ['docs/INDEX_LIBRARY.md', 'src/dl_engine/index_library.py'], 'reason': 'Schema and query documentation', 'mitigation': 'WPK owns the implementation; dependent WPL updates the operator contract only after WPK completes.'}"
+  ],
+  "integration_steps": [
+    "WPJ freezes the manifest and state-machine contract before WPK implements it.",
+    "WPK exposes deterministic, side-effect-injected publication primitives before WPL writes failure-injection tests and operator documentation.",
+    "WPL verifies a separate schema-4 candidate and alternate 8091 listener while preserving the canonical schema-3 DB and legacy 8090 until explicit cutover authority exists."
+  ],
+  "plan_doc": "docs/campaign-plan-004-package-a-fail-closed.md",
+  "plan_file": "data/plans/plan-004.json",
+  "plan_elements": {
+    "campaign_title": "Safe Schema-4 Gallery Publication",
+    "goal_statement": "Provide a tested, operator-safe schema-4 gallery-index packaging and publication path so SND-HOST can build and prove a candidate while downloads continue, then activate it only inside an explicit maintenance and cutover boundary without risking the last verified gallery snapshot, canonical media, durable evidence, or the sibling maintenance index.",
+    "exit_criteria": [
+      "A versioned JSON manifest requires an existing schema-4 candidate main database, exact size and SHA-256, verified library/database identity, zero-or-absent WAL, and rejects orphan WAL/SHM-only artifacts.",
+      "The manifest and tests distinguish publication-manifest schema, exhaustive-verification report schema, and SQLite user/metadata schema; a report's top-level schema_version is never treated as the database schema.",
+      "WhatIf and candidate-only modes do not modify the canonical gallery database, its WAL/SHM set, queue state, listener state, canonical media, sidecars, ledgers, or sibling schema-2 database.",
+      "Apply fails closed unless exact VERIFIED snd-host identity, an authoritative queue hold, zero downloader descendants and index writers, a settled DB/WAL/SHM interval, verified candidate identity, same-volume activation, and an explicitly stopped 8090 cutover listener are all proven.",
+      "Activation retains a hashed rollback artifact, uses atomic same-volume replacement, verifies the canonical path after reopen, restores the prior snapshot on injected activation or verification failure, and releases no hold before success.",
+      "Every ingest or publication exception rolls back and closes SQLite connections without partially publishing schema, derived data, reports, manifests, or live files.",
+      "Failure-injection tests cover candidate build failure, manifest drift, open handles, nonzero WAL, orphan sidecars, writer/listener activity, replacement failure, post-publish verification failure, rollback restoration, and unchanged-live guarantees.",
+      "The schema-4 candidate passes exhaustive verification and the complete alternate-8091 HTTP/browser matrix while the canonical schema-3 database and legacy 8090 tuple remain unchanged; live cutover still requires its explicit apply flag.",
+      "Compile, full pytest, targeted publication tests, diff-check, plan validation, and documentation drift checks pass with zero failures."
+    ],
+    "impact_assessment": [
+      {
+        "file": "schemas/gallery-publication-manifest.schema.json",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "medium"
+      },
+      {
+        "file": "docs/GALLERY_INDEX_PUBLICATION.md",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "medium"
+      },
+      {
+        "file": "src/dl_engine/gallery_publication.py",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "high"
+      },
+      {
+        "file": "src/dl_engine/index_library.py",
+        "lines": "4939",
+        "change_type": "modify",
+        "risk": "high"
+      },
+      {
+        "file": "scripts/publish_gallery_index.py",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "high"
+      },
+      {
+        "file": "scripts/Invoke-GalleryIndexPublication.ps1",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "high"
+      },
+      {
+        "file": "tests/test_gallery_publication.py",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "high"
+      },
+      {
+        "file": "tests/test_gallery_publication_contract.py",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "high"
+      },
+      {
+        "file": "tests/test_index_library.py",
+        "lines": "",
+        "change_type": "modify",
+        "risk": "high"
+      },
+      {
+        "file": "docs/INDEX_LIBRARY.md",
+        "lines": "",
+        "change_type": "modify",
+        "risk": "high"
+      },
+      {
+        "file": "reports/README_live_dashboard.md",
+        "lines": "",
+        "change_type": "modify",
+        "risk": "high"
+      },
+      {
+        "file": "docs/GALLERY_ROADMAP.md",
+        "lines": "",
+        "change_type": "modify",
+        "risk": "high"
+      },
+      {
+        "file": "live-tracker.md",
+        "lines": "",
+        "change_type": "modify",
+        "risk": "high"
+      }
+    ],
+    "agent_roster": [
+      {
+        "letter": "wpj",
+        "name": "define-publication-contract",
+        "scope": "Define the fail-closed publication state machine, manifest schema, queue-hold proof, candidate identity, activation, verification, and rollback contracts without changing runtime behavior.",
+        "deps": [],
+        "files": [
+          "schemas/gallery-publication-manifest.schema.json",
+          "docs/GALLERY_INDEX_PUBLICATION.md"
+        ],
+        "group": 0,
+        "complexity": "medium"
+      },
+      {
+        "letter": "wpk",
+        "name": "implement-gallery-publication",
+        "scope": "Implement candidate preparation, manifest validation, settled writer and listener preflight, same-volume backup and atomic activation, automatic rollback, post-publication verification, and complete exception rollback using explicit paths and WhatIf-first orchestration.",
+        "deps": [
+          "wpj"
+        ],
+        "files": [
+          "src/dl_engine/gallery_publication.py",
+          "src/dl_engine/index_library.py",
+          "scripts/publish_gallery_index.py",
+          "scripts/Invoke-GalleryIndexPublication.ps1"
+        ],
+        "group": 1,
+        "complexity": "high"
+      },
+      {
+        "letter": "wpl",
+        "name": "verify-publication-workflow",
+        "scope": "Add failure-injection and Windows contract tests, reconcile schema-4 operator documentation and roadmap state, and execute repository, candidate, alternate-listener, rollback, and unchanged-live verification without performing an unauthorized cutover.",
+        "deps": [
+          "wpk"
+        ],
+        "files": [
+          "tests/test_gallery_publication.py",
+          "tests/test_gallery_publication_contract.py",
+          "tests/test_index_library.py",
+          "docs/INDEX_LIBRARY.md",
+          "reports/README_live_dashboard.md",
+          "docs/GALLERY_ROADMAP.md",
+          "live-tracker.md"
+        ],
+        "group": 2,
+        "complexity": "high"
+      }
+    ],
+    "dependency_graph": [
+      {
+        "group": 0,
+        "agents": [
+          "wpj"
+        ]
+      },
+      {
+        "group": 1,
+        "agents": [
+          "wpk"
+        ]
+      },
+      {
+        "group": 2,
+        "agents": [
+          "wpl"
+        ]
+      }
+    ],
+    "file_ownership_map": [
+      {
+        "file": "schemas/gallery-publication-manifest.schema.json",
+        "owner": "wpj"
+      },
+      {
+        "file": "docs/GALLERY_INDEX_PUBLICATION.md",
+        "owner": "wpj"
+      },
+      {
+        "file": "src/dl_engine/gallery_publication.py",
+        "owner": "wpk"
+      },
+      {
+        "file": "src/dl_engine/index_library.py",
+        "owner": "wpk"
+      },
+      {
+        "file": "scripts/publish_gallery_index.py",
+        "owner": "wpk"
+      },
+      {
+        "file": "scripts/Invoke-GalleryIndexPublication.ps1",
+        "owner": "wpk"
+      },
+      {
+        "file": "tests/test_gallery_publication.py",
+        "owner": "wpl"
+      },
+      {
+        "file": "tests/test_gallery_publication_contract.py",
+        "owner": "wpl"
+      },
+      {
+        "file": "tests/test_index_library.py",
+        "owner": "wpl"
+      },
+      {
+        "file": "docs/INDEX_LIBRARY.md",
+        "owner": "wpl"
+      },
+      {
+        "file": "reports/README_live_dashboard.md",
+        "owner": "wpl"
+      },
+      {
+        "file": "docs/GALLERY_ROADMAP.md",
+        "owner": "wpl"
+      },
+      {
+        "file": "live-tracker.md",
+        "owner": "wpl"
+      }
+    ],
+    "conflict_zone_analysis": [
+      "{'files': ['docs/INDEX_LIBRARY.md', 'src/dl_engine/index_library.py'], 'reason': 'Schema and query documentation', 'mitigation': 'WPK owns the implementation; dependent WPL updates the operator contract only after WPK completes.'}"
+    ],
+    "integration_points": [
+      "WPJ freezes the manifest and state-machine contract before WPK implements it.",
+      "WPK exposes deterministic, side-effect-injected publication primitives before WPL writes failure-injection tests and operator documentation.",
+      "WPL verifies a separate schema-4 candidate and alternate 8091 listener while preserving the canonical schema-3 DB and legacy 8090 until explicit cutover authority exists."
+    ],
+    "schema_changes": [],
+    "risk_assessment": [
+      {
+        "risk": "An in-place migration or partial replacement could strand legacy 8090 or lose the last verified schema-3 snapshot.",
+        "likelihood": "high",
+        "impact": "high",
+        "mitigation": "Build and verify a separate candidate; require an explicit cutover flag, stopped listener, hashed backup, same-volume activation, and automatic rollback."
+      },
+      {
+        "risk": "The queue can mark a job failed while downloader descendants remain alive, so queue status alone is not a writer gate.",
+        "likelihood": "high",
+        "impact": "high",
+        "mitigation": "Require both an authoritative hold and zero descendant/index-writer proof over a settled interval; never terminate unknown processes automatically."
+      },
+      {
+        "risk": "WAL/SHM sidecars or open Windows handles can make a main-file-only replacement inconsistent or impossible.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Reject nonzero WAL and orphan sidecars, close/checkpoint candidates, require stopped consumers, and cover open-handle and rollback paths with same-volume tests."
+      },
+      {
+        "risk": "Path/mtime-only verification evidence can become stale after publication.",
+        "likelihood": "medium",
+        "impact": "medium",
+        "mitigation": "Bind manifests and post-publish reports to exact DB path, schema, byte length, SHA-256, library root, and generated timestamp."
+      },
+      {
+        "risk": "The exhaustive verifier can reject an otherwise healthy schema-4 database when canonical media layout has drifted.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Treat every layout mismatch as a publication blocker; leave media moves to the existing maintenance authority at a verified zero-child boundary, then rebuild and reverify a fresh candidate."
+      },
+      {
+        "risk": "The verification report's schema_version describes the report format, not the SQLite database schema, and can be misread during manifest validation.",
+        "likelihood": "medium",
+        "impact": "high",
+        "mitigation": "Namespace all version fields and validate PRAGMA user_version plus schema_metadata independently from the report-format version."
+      },
+      {
+        "risk": "The analyzer is heuristic-only and reports unrelated files as unassigned.",
+        "likelihood": "low",
+        "impact": "medium",
+        "mitigation": "Use three sequential agents, explicit exclusive file lists, dirty-worktree preflight, and final diff review."
+      }
+    ],
+    "verification_strategy": [
+      "python -m compileall -q src reports tests",
+      "python -m pytest -q",
+      ".venv\\Scripts\\python.exe -m compileall -q src reports tests",
+      ".venv\\Scripts\\python.exe -m pytest -q",
+      ".venv\\Scripts\\python.exe -m pytest -q tests/test_gallery_publication.py tests/test_gallery_publication_contract.py tests/test_index_library.py",
+      ".venv\\Scripts\\python.exe scripts\\task_manager.py plan validate plan-004 --json",
+      "git diff --check",
+      "Run WhatIf and failure-injection publication scenarios against temporary same-volume databases; compare live DB/WAL/SHM hashes and 8090 listener tuple before and after.",
+      "Validate publication-manifest, verification-report, PRAGMA user_version, and schema_metadata versions as distinct fields.",
+      "Build and exhaustively verify a schema-4 candidate, then execute the Plan 003 alternate-8091 HTTP/browser, viewport, zoom, keyboard, history, original-load, and cleanup matrix without POSTs or 8090 cutover.",
+      "If exhaustive verification fails, record the exact issue taxonomy and allow only explicitly labelled diagnostics; no partial browser pass may satisfy promotion or authorize media repair."
+    ],
+    "documentation_updates": [
+      "Add docs/GALLERY_INDEX_PUBLICATION.md and the manifest schema as the publication authority, including state transitions, queue hold ownership, WhatIf, candidate preparation, activation, rollback, and recovery.",
+      "Reconcile docs/INDEX_LIBRARY.md, reports/README_live_dashboard.md, docs/GALLERY_ROADMAP.md, and live-tracker.md so schema-4 candidate, verified, published, cutover, and rollback states are explicit and stale schema-3 wording is removed."
+    ],
+    "cost_estimate": {
+      "tiered_usd": 2.07,
+      "max_usd": 2.25,
+      "savings_usd": 0.18,
+      "savings_pct": 8.0
+    }
+  },
+  "analysis_summary": {
+    "total_files": 81,
+    "total_lines": 42795,
+    "conflict_zones": [
+      {
+        "files": [
+          "reports/dashboard_server.py",
+          "src/dl_engine/library_browser.py"
+        ],
+        "reason": "HTTP route and response contract"
+      },
+      {
+        "files": [
+          "reports/library-browser.html",
+          "src/dl_engine/library_browser.py"
+        ],
+        "reason": "Browser/API field contract"
+      },
+      {
+        "files": [
+          "docs/INDEX_LIBRARY.md",
+          "src/dl_engine/index_library.py"
+        ],
+        "reason": "Schema and query documentation"
+      }
+    ],
+    "modules": {
+      "build": 6584,
+      "reports": 6212,
+      "analysis": 3075,
+      "core": 2836,
+      "task_runtime": 4870,
+      "src": 6902,
+      "tests": 6161,
+      "other": 2520,
+      "agents": 1024,
+      "docs": 2486,
+      "schemas": 125
+    },
+    "detected_stacks": [],
+    "project_graph": {
+      "nodes": [],
+      "edges": []
+    },
+    "analysis_schema_version": 3,
+    "analysis_providers": [
+      "basic"
+    ],
+    "analysis_health": {
+      "mode": "auto",
+      "requested_providers": [
+        "basic",
+        "dotnet-cli"
+      ],
+      "applied_providers": [
+        "basic"
+      ],
+      "skipped_providers": [
+        {
+          "name": "dotnet-cli",
+          "reason": "no-dotnet-projects"
+        }
+      ],
+      "partial_analysis": true,
+      "fallback_only": true,
+      "heuristic_only": true,
+      "confidence": "low",
+      "warnings": [
+        "Optional analysis providers did not contribute; planning data is heuristic-only.",
+        "Unassigned files remain in the analysis inventory."
+      ]
+    },
+    "planning_context": {
+      "analysis_health": {
+        "mode": "auto",
+        "requested_providers": [
+          "basic",
+          "dotnet-cli"
+        ],
+        "applied_providers": [
+          "basic"
+        ],
+        "skipped_providers": [
+          {
+            "name": "dotnet-cli",
+            "reason": "no-dotnet-projects"
+          }
+        ],
+        "partial_analysis": true,
+        "fallback_only": true,
+        "heuristic_only": true,
+        "confidence": "low",
+        "warnings": [
+          "Optional analysis providers did not contribute; planning data is heuristic-only.",
+          "Unassigned files remain in the analysis inventory."
+        ]
+      },
+      "detected_stacks": [],
+      "project_graph": {
+        "nodes": [],
+        "edges": []
+      },
+      "conflict_zones": [
+        {
+          "files": [
+            "reports/dashboard_server.py",
+            "src/dl_engine/library_browser.py"
+          ],
+          "reason": "HTTP route and response contract"
+        },
+        {
+          "files": [
+            "reports/library-browser.html",
+            "src/dl_engine/library_browser.py"
+          ],
+          "reason": "Browser/API field contract"
+        },
+        {
+          "files": [
+            "docs/INDEX_LIBRARY.md",
+            "src/dl_engine/index_library.py"
+          ],
+          "reason": "Schema and query documentation"
+        }
+      ],
+      "ui_surfaces": [],
+      "ownership_summary": {
+        "project_count": 0,
+        "assigned_file_count": 0,
+        "assigned_line_count": 0,
+        "unassigned_file_count": 81,
+        "unassigned_paths": [
+          ".Codex/skills/planning-contract.md",
+          ".Codex/skills/project.toml",
+          ".continue/rules/project-conventions.md",
+          "README.md",
+          "agents/agent-wpd-secure-thumbnail-serving.md",
+          "agents/agent-wpe-optimize-enrich-index.md",
+          "agents/agent-wpf-build-gallery-discovery-ui.md",
+          "agents/agent-wpg-finish-rating-snapshot-contract.md",
+          "agents/agent-wph-harden-gallery-interactions.md",
+          "agents/agent-wpi-verify-gallery-upgrades.md",
+          "build/lib/dl_engine/__init__.py",
+          "build/lib/dl_engine/content_rating.py",
+          "build/lib/dl_engine/gallery_thumbnails.py",
+          "build/lib/dl_engine/index_library.py",
+          "build/lib/dl_engine/library_browser.py",
+          "build/lib/dl_engine/library_transfer.py",
+          "build/lib/dl_engine/wallpaper_metadata.py",
+          "data/analysis-cache.json",
+          "data/plans/plan-002.json",
+          "data/plans/plan-003.json",
+          "data/tasks.json",
+          "docs/CONTENT_RATING.md",
+          "docs/GALLERY_ROADMAP.md",
+          "docs/INDEX_LIBRARY.md",
+          "docs/campaign-plan-002-secure-and-improve-the.md",
+          "docs/campaign-plan-003-harden-the-wallpaper-gallery.md",
+          "docs/discovery-gallery-sorting-presentation.md",
+          "docs/discovery-gallery-upgrade-review.md",
+          "docs/discovery-picture-category-navigation.md",
+          "docs/discovery-sorting-tag-pipeline.md",
+          "live-tracker.md",
+          "pyproject.toml",
+          "reports/README_live_dashboard.md",
+          "reports/_build_dashboard.py",
+          "reports/_render_dashboard.py",
+          "reports/dashboard_server.py",
+          "reports/library-browser.html",
+          "reports/watch_dashboard.ps1",
+          "schemas/wallpaper-metadata.schema.json",
+          "scripts/analysis/__init__.py",
+          "scripts/analysis/basic_provider.py",
+          "scripts/analysis/derived.py",
+          "scripts/analysis/dotnet_cli_provider.py",
+          "scripts/analysis/engine.py",
+          "scripts/analysis/inventory.py",
+          "scripts/analysis/models.py",
+          "scripts/analysis/planning_context.py",
+          "scripts/analysis/project_graph.py",
+          "scripts/analysis/relations.py",
+          "scripts/analysis/signals.py",
+          "scripts/task_manager.py",
+          "scripts/task_runtime/__init__.py",
+          "scripts/task_runtime/artifacts.py",
+          "scripts/task_runtime/bootstrap.py",
+          "scripts/task_runtime/commands.py",
+          "scripts/task_runtime/config.py",
+          "scripts/task_runtime/execution.py",
+          "scripts/task_runtime/merge.py",
+          "scripts/task_runtime/orchestration.py",
+          "scripts/task_runtime/plans.py",
+          "scripts/task_runtime/result.py",
+          "scripts/task_runtime/specs.py",
+          "scripts/task_runtime/state.py",
+          "scripts/task_runtime/telemetry.py",
+          "scripts/task_runtime/validation.py",
+          "scripts/task_runtime/verify.py",
+          "src/dl_engine/__init__.py",
+          "src/dl_engine/content_rating.py",
+          "src/dl_engine/gallery_thumbnails.py",
+          "src/dl_engine/index_library.py",
+          "src/dl_engine/library_browser.py",
+          "src/dl_engine/library_transfer.py",
+          "src/dl_engine/wallpaper_metadata.py",
+          "tests/test_content_rating.py",
+          "tests/test_dashboard_server.py",
+          "tests/test_gallery_browser_contract.py",
+          "tests/test_gallery_thumbnails.py",
+          "tests/test_index_library.py",
+          "tests/test_library_browser.py",
+          "tests/test_library_transfer.py",
+          "tests/test_wallpaper_metadata.py"
+        ],
+        "projects": []
+      },
+      "priority_projects": {
+        "startup": [],
+        "packaging": []
+      },
+      "coordination_hotspots": [
+        {
+          "kind": "conflict-zone",
+          "project": "",
+          "entry": "",
+          "files": [
+            "reports/dashboard_server.py",
+            "src/dl_engine/library_browser.py"
+          ],
+          "reason": "HTTP route and response contract",
+          "startup": false
+        },
+        {
+          "kind": "conflict-zone",
+          "project": "",
+          "entry": "",
+          "files": [
+            "reports/library-browser.html",
+            "src/dl_engine/library_browser.py"
+          ],
+          "reason": "Browser/API field contract",
+          "startup": false
+        },
+        {
+          "kind": "conflict-zone",
+          "project": "",
+          "entry": "",
+          "files": [
+            "docs/INDEX_LIBRARY.md",
+            "src/dl_engine/index_library.py"
+          ],
+          "reason": "Schema and query documentation",
+          "startup": false
+        }
+      ]
+    }
+  },
+  "backfill_reasons": [],
+  "approved_at": "2026-07-21T00:21:30+00:00",
+  "executed_at": "2026-07-21T00:21:49+00:00",
+  "updated_at": "2026-07-21T00:21:49+00:00"
+}
