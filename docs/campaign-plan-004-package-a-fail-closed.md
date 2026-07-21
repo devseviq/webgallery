@@ -41,6 +41,7 @@ Provide a tested, operator-safe schema-4 gallery-index packaging and publication
 | scripts/Invoke-GalleryIndexPublication.ps1 | new | create | high |
 | tests/test_gallery_publication.py | new | create | high |
 | tests/test_gallery_publication_contract.py | new | create | high |
+| tests/test_gallery_publication_recovery.py | new | create | high |
 | tests/test_index_library.py |  | modify | high |
 | docs/INDEX_LIBRARY.md |  | modify | high |
 | reports/README_live_dashboard.md |  | modify | high |
@@ -53,7 +54,7 @@ Provide a tested, operator-safe schema-4 gallery-index packaging and publication
 | --- | --- | --- | --- | --- | --- | --- |
 | wpj | define-publication-contract | Define the fail-closed publication state machine, manifest schema, queue-hold proof, candidate identity, activation, verification, and rollback contracts without changing runtime behavior. |  | schemas/gallery-publication-manifest.schema.json, docs/GALLERY_INDEX_PUBLICATION.md | 0 | medium |
 | wpk | implement-gallery-publication | Implement candidate preparation, manifest validation, under-hold freshness proof, settled writer and listener preflight, hashed backup and recoverable journaled activation, interrupt-safe rollback, post-publication verification, and WhatIf-first orchestration using explicit paths. | wpj | src/dl_engine/gallery_publication.py, src/dl_engine/index_library.py, scripts/publish_gallery_index.py, scripts/Invoke-GalleryIndexPublication.ps1 | 1 | high |
-| wpl | verify-publication-workflow | Add failure-injection and Windows contract tests, reconcile schema-4 operator documentation and roadmap state, and execute repository, candidate, alternate-listener, rollback, and unchanged-live verification without performing an unauthorized cutover. | wpk | tests/test_gallery_publication.py, tests/test_gallery_publication_contract.py, tests/test_index_library.py, docs/INDEX_LIBRARY.md, reports/README_live_dashboard.md, docs/GALLERY_ROADMAP.md, live-tracker.md | 2 | high |
+| wpl | verify-publication-workflow | Add failure-injection and Windows contract tests, reconcile schema-4 operator documentation and roadmap state, and execute repository, candidate, alternate-listener, rollback, and unchanged-live verification without performing an unauthorized cutover. | wpk | tests/test_gallery_publication.py, tests/test_gallery_publication_recovery.py, tests/test_gallery_publication_contract.py, tests/test_index_library.py, docs/INDEX_LIBRARY.md, reports/README_live_dashboard.md, docs/GALLERY_ROADMAP.md, live-tracker.md | 2 | high |
 
 ## 5. Dependency Graph
 
@@ -75,6 +76,7 @@ Group 2: wpl
 | scripts/Invoke-GalleryIndexPublication.ps1 | wpk |
 | tests/test_gallery_publication.py | wpl |
 | tests/test_gallery_publication_contract.py | wpl |
+| tests/test_gallery_publication_recovery.py | wpl |
 | tests/test_index_library.py | wpl |
 | docs/INDEX_LIBRARY.md | wpl |
 | reports/README_live_dashboard.md | wpl |
@@ -119,7 +121,7 @@ Group 2: wpl
 - python -m pytest -q
 - .venv\Scripts\python.exe -m compileall -q src reports tests
 - .venv\Scripts\python.exe -m pytest -q
-- .venv\Scripts\python.exe -m pytest -q tests/test_gallery_publication.py tests/test_gallery_publication_contract.py tests/test_index_library.py
+- .venv\Scripts\python.exe -m pytest -q tests/test_gallery_publication.py tests/test_gallery_publication_recovery.py tests/test_gallery_publication_contract.py tests/test_index_library.py
 - .venv\Scripts\python.exe scripts\task_manager.py plan validate plan-004 --json
 - git diff --check
 - Run WhatIf and failure-injection publication scenarios against temporary same-volume databases; compare live DB/WAL/SHM hashes and 8090 listener tuple before and after.

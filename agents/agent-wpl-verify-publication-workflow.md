@@ -4,7 +4,7 @@
 
 **Depends on:** Agent WPK
 
-**Output files:** `tests/test_gallery_publication.py`, `tests/test_gallery_publication_contract.py`, `tests/test_index_library.py`, `docs/INDEX_LIBRARY.md`, `reports/README_live_dashboard.md`, `docs/GALLERY_ROADMAP.md`, `live-tracker.md`
+**Output files:** `tests/test_gallery_publication.py`, `tests/test_gallery_publication_recovery.py`, `tests/test_gallery_publication_contract.py`, `tests/test_index_library.py`, `docs/INDEX_LIBRARY.md`, `reports/README_live_dashboard.md`, `docs/GALLERY_ROADMAP.md`, `live-tracker.md`
 
 ## Exit Criteria
 
@@ -36,7 +36,7 @@
 
 ### Part 1 — Publication-core regression suite
 
-Create `tests/test_gallery_publication.py` with temporary same-volume directories and synthetic SQLite databases. Cover:
+Create `tests/test_gallery_publication.py` and the focused public-recovery companion `tests/test_gallery_publication_recovery.py` with temporary same-volume directories and synthetic SQLite databases. Cover:
 
 - valid schema-4 candidate and manifest binding;
 - distinct manifest/report/SQLite schema versions, including a report-format `schema_version=1` paired with a valid SQLite schema-4 candidate and negative substitution cases;
@@ -79,7 +79,7 @@ If layout drift, the orphan downloader, or the queue prevents candidate verifica
 
 ## Constraints
 
-- Modify only the seven owned files.
+- Modify only the eight owned files.
 - Preserve existing Plan 003 dirty work and recovery stash.
 - Runtime checks are candidate-only and read-only toward canonical DB/media/queue/ledgers/8090.
 - Do not delete orphan pending sidecars or any candidate unless its exact ownership and recovery status are proven.
@@ -90,7 +90,7 @@ If layout drift, the orphan downloader, or the queue prevents candidate verifica
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q src reports tests scripts\publish_gallery_index.py
-.\.venv\Scripts\python.exe -m pytest -q tests\test_gallery_publication.py tests\test_gallery_publication_contract.py tests\test_index_library.py
+.\.venv\Scripts\python.exe -m pytest -q tests\test_gallery_publication.py tests\test_gallery_publication_recovery.py tests\test_gallery_publication_contract.py tests\test_index_library.py
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe scripts\task_manager.py plan validate plan-004 --json
 git diff --check

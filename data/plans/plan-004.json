@@ -4,7 +4,7 @@
   "artifact_version": 1,
   "created_at": "2026-07-21T00:09:23+00:00",
   "status": "executed",
-  "publication_status": "planned-not-published",
+  "publication_status": "repository-verified-not-published",
   "description": "Package a fail-closed schema-4 gallery-index publication workflow with candidate build and manifest validation, an authoritative SND-HOST queue/writer hold, recoverable journaled activation with one same-volume atomic main-database replacement, post-publication verification, and rollback while preserving legacy 8090 until an explicit cutover.",
   "slug": "package-a-fail-closed",
   "planner_kind": "planner-refactor",
@@ -62,6 +62,7 @@
       "files": [
         "tests/test_gallery_publication.py",
         "tests/test_gallery_publication_contract.py",
+        "tests/test_gallery_publication_recovery.py",
         "tests/test_index_library.py",
         "docs/INDEX_LIBRARY.md",
         "reports/README_live_dashboard.md",
@@ -159,6 +160,12 @@
         "risk": "high"
       },
       {
+        "file": "tests/test_gallery_publication_recovery.py",
+        "lines": "new",
+        "change_type": "create",
+        "risk": "high"
+      },
+      {
         "file": "tests/test_index_library.py",
         "lines": "",
         "change_type": "modify",
@@ -228,6 +235,7 @@
         "files": [
           "tests/test_gallery_publication.py",
           "tests/test_gallery_publication_contract.py",
+          "tests/test_gallery_publication_recovery.py",
           "tests/test_index_library.py",
           "docs/INDEX_LIBRARY.md",
           "reports/README_live_dashboard.md",
@@ -289,6 +297,10 @@
       },
       {
         "file": "tests/test_gallery_publication_contract.py",
+        "owner": "wpl"
+      },
+      {
+        "file": "tests/test_gallery_publication_recovery.py",
         "owner": "wpl"
       },
       {
@@ -394,7 +406,7 @@
       "python -m pytest -q",
       ".venv\\Scripts\\python.exe -m compileall -q src reports tests",
       ".venv\\Scripts\\python.exe -m pytest -q",
-      ".venv\\Scripts\\python.exe -m pytest -q tests/test_gallery_publication.py tests/test_gallery_publication_contract.py tests/test_index_library.py",
+      ".venv\\Scripts\\python.exe -m pytest -q tests/test_gallery_publication.py tests/test_gallery_publication_recovery.py tests/test_gallery_publication_contract.py tests/test_index_library.py",
       ".venv\\Scripts\\python.exe scripts\\task_manager.py plan validate plan-004 --json",
       "git diff --check",
       "Run WhatIf and failure-injection publication scenarios against temporary same-volume databases; compare live DB/WAL/SHM hashes and 8090 listener tuple before and after.",
@@ -675,5 +687,5 @@
   "backfill_reasons": [],
   "approved_at": "2026-07-21T00:21:30+00:00",
   "executed_at": "2026-07-21T00:21:49+00:00",
-  "updated_at": "2026-07-21T00:21:49+00:00"
+  "updated_at": "2026-07-21T08:03:55+00:00"
 }
