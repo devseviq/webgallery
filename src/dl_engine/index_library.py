@@ -76,7 +76,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Optional, Sequence
 
 from .content_rating import (
@@ -2290,12 +2290,19 @@ def _is_verification_excluded(relative_path: Path) -> bool:
     return bool(excluded.intersection(part.casefold() for part in relative_path.parts))
 
 
-def verify_library(db_path: Path, library_root: Path) -> dict[str, object]:
+def verify_library(
+    db_path: Path,
+    library_root: Path,
+    *,
+    issue_observer: Optional[Callable[[dict[str, str]], None]] = None,
+) -> dict[str, object]:
     """Return a JSON-serializable health report without mutating DB or library.
 
     Args:
         db_path: Existing SQLite index to open in read-only mode.
         library_root: Existing canonical library directory to inspect.
+        issue_observer: Optional callback receiving every issue before report
+            detail truncation is applied.
 
     Returns:
         A stable version-1 report with exact aggregate counters and at most 200
@@ -2320,10 +2327,11 @@ def verify_library(db_path: Path, library_root: Path) -> dict[str, object]:
     def record_issue(code: str, path: Path | str, detail: str) -> None:
         nonlocal issues_total
         issues_total += 1
+        issue = {"code": code, "path": str(path), "detail": str(detail)}
+        if issue_observer is not None:
+            issue_observer(dict(issue))
         if len(issues) < VERIFY_MAX_ISSUES:
-            issues.append(
-                {"code": code, "path": str(path), "detail": str(detail)}
-            )
+            issues.append(issue)
 
     conn = _open_sqlite_read_only(database)
     try:
@@ -4925,46 +4933,113 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         logger.error("index open/migration failed: %s", exc)
         return 2
 
+    def bounded_ingest_error(exc: BaseException) -> str:
+        detail = " ".join(str(exc).split())
+        return (detail or "<no detail>")[:500]
+
+    def rollback_failed_ingest(primary: BaseException) -> None:
+        try:
+            conn.rollback()
+        except (KeyboardInterrupt, SystemExit) as cleanup_exc:
+            logger.error(
+                "index ingest rollback failed: %s: %s",
+                type(cleanup_exc).__name__, bounded_ingest_error(cleanup_exc),
+            )
+            if isinstance(primary, (KeyboardInterrupt, SystemExit)):
+                if hasattr(primary, "add_note"):
+                    primary.add_note(
+                        "rollback also interrupted: "
+                        f"{type(cleanup_exc).__name__}: "
+                        f"{bounded_ingest_error(cleanup_exc)}"
+                    )
+                return
+            raise
+        except Exception as cleanup_exc:
+            logger.error(
+                "index ingest rollback failed: %s: %s",
+                type(cleanup_exc).__name__, bounded_ingest_error(cleanup_exc),
+            )
+
+    preserve_primary_error = False
+    primary_interrupt: BaseException | None = None
+    exit_code = 0
     try:
         ledger_path = args.ledger_path
         stats = ingest_library(
             conn, args.library_root, ledger_path=ledger_path,
             provider_ledger_path=args.provider_ledger_path,
         )
-    except (FileNotFoundError, NotADirectoryError) as exc:
-        logger.error("%s", exc)
-        conn.close()
-        return 2
-    print("Ingest complete:")
-    for k in (
-        "scanned", "wallhaven", "zerochan", "anime_pictures", "unknown",
-        "tagged", "sidecars", "invalid_sidecars", "stale_removed",
-        "ledger_lines", "ledger_records", "ledger_invalid",
-        "ledger_superseded", "ledger_applied", "ledger_unmatched",
-        "provider_ledger_lines", "provider_ledger_records",
-        "provider_ledger_invalid", "provider_ledger_superseded",
-        "provider_records_matched", "provider_records_unmatched",
-        "provider_images_updated", "provider_tags_applied",
-    ):
-        print(f"  {k:14s} {stats[k]}")
-    print(f"DB: {args.db_path}")
 
-    if args.enrich:
-        assert args.env_path is not None
-        key = load_api_key(args.env_path)
-        print(f"\nEnriching Wallhaven (api key: {'yes' if key else 'no (SFW only)'})...")
-        est = _estimate_enrich_minutes(conn)
-        print(f"  estimated runtime: ~{est} min (resumable)")
-        enrich_stats = enrich_wallhaven(
-            conn, key, max_fetch=args.max_fetch,
-            max_attempts=args.max_attempts, ledger_path=ledger_path,
+        print("Ingest complete:")
+        for k in (
+            "scanned", "wallhaven", "zerochan", "anime_pictures", "unknown",
+            "tagged", "sidecars", "invalid_sidecars", "stale_removed",
+            "ledger_lines", "ledger_records", "ledger_invalid",
+            "ledger_superseded", "ledger_applied", "ledger_unmatched",
+            "provider_ledger_lines", "provider_ledger_records",
+            "provider_ledger_invalid", "provider_ledger_superseded",
+            "provider_records_matched", "provider_records_unmatched",
+            "provider_images_updated", "provider_tags_applied",
+        ):
+            print(f"  {k:14s} {stats[k]}")
+        print(f"DB: {args.db_path}")
+
+        if args.enrich:
+            assert args.env_path is not None
+            key = load_api_key(args.env_path)
+            print(
+                "\nEnriching Wallhaven "
+                f"(api key: {'yes' if key else 'no (SFW only)'})..."
+            )
+            est = _estimate_enrich_minutes(conn)
+            print(f"  estimated runtime: ~{est} min (resumable)")
+            enrich_stats = enrich_wallhaven(
+                conn, key, max_fetch=args.max_fetch,
+                max_attempts=args.max_attempts, ledger_path=ledger_path,
+            )
+            print("Enrichment pass finished:")
+            for k in ("attempted", "fetched", "skipped", "failed", "remaining"):
+                print(f"  {k:14s} {enrich_stats[k]}")
+
+    except (KeyboardInterrupt, SystemExit) as exc:
+        preserve_primary_error = True
+        primary_interrupt = exc
+        rollback_failed_ingest(exc)
+        raise
+    except Exception as exc:
+        preserve_primary_error = True
+        rollback_failed_ingest(exc)
+        logger.error(
+            "index ingest failed: %s: %s",
+            type(exc).__name__, bounded_ingest_error(exc),
         )
-        print("Enrichment pass finished:")
-        for k in ("attempted", "fetched", "skipped", "failed", "remaining"):
-            print(f"  {k:14s} {enrich_stats[k]}")
-
-    conn.close()
-    return 0
+        exit_code = 2
+    finally:
+        pending_exception = sys.exc_info()[0] is not None
+        try:
+            conn.close()
+        except (KeyboardInterrupt, SystemExit) as cleanup_exc:
+            if primary_interrupt is None:
+                raise
+            logger.error(
+                "index ingest close failed: %s: %s",
+                type(cleanup_exc).__name__, bounded_ingest_error(cleanup_exc),
+            )
+            if hasattr(primary_interrupt, "add_note"):
+                primary_interrupt.add_note(
+                    "close also interrupted: "
+                    f"{type(cleanup_exc).__name__}: "
+                    f"{bounded_ingest_error(cleanup_exc)}"
+                )
+        except Exception as cleanup_exc:
+            if not preserve_primary_error and pending_exception:
+                raise
+            logger.error(
+                "index ingest close failed: %s: %s",
+                type(cleanup_exc).__name__, bounded_ingest_error(cleanup_exc),
+            )
+            exit_code = 2
+    return exit_code
 
 
 def _estimate_enrich_minutes(conn: sqlite3.Connection) -> int:
