@@ -5,6 +5,56 @@ The local server presents two deliberately separate surfaces:
 - `/reports/download-queue-dashboard.html` is the generated operations view.
 - `/reports/library-browser.html` is the full indexed-library browser.
 
+## Schema-4 publication boundary
+
+The server is a reader of the configured gallery database; it does not build,
+publish, recover, or prove that database. The publication authority is
+[`docs/GALLERY_INDEX_PUBLICATION.md`](../docs/GALLERY_INDEX_PUBLICATION.md),
+with strict state/evidence shape in
+[`schemas/gallery-publication-manifest.schema.json`](../schemas/gallery-publication-manifest.schema.json).
+The exact WhatIf, prepare, validate, publish, and recover commands are in
+[`docs/INDEX_LIBRARY.md`](../docs/INDEX_LIBRARY.md#plan-004-operator-workflow).
+
+Plan 004 publication code is merged and `repository-verified`: Python
+compilation, the 148-test targeted gate (plus 125 subtests), the 252-test full
+gate (plus 186 subtests), PowerShell parser/help checks, plan validation, and
+diff checks all passed. This documentation update ran no new live candidate,
+browser, publication, cutover, recovery, queue, scheduled-task, process,
+listener, or canonical-database check or mutation. Older
+2026-07-20/2026-07-21 observations in the roadmap and tracker are historical
+diagnostics and may be stale; they are not current acceptance evidence.
+
+The fixed SND-HOST publication identities are:
+
+```text
+Canonical DB:    F:\Wallpapers\webgallery_library.sqlite
+Sibling DB:      F:\Wallpapers\wallpaper_library.sqlite (protected)
+Candidate root:  F:\Wallpapers\.wallpaper-library-maintenance\gallery-publication\candidates
+Manifest root:   F:\Wallpapers\.wallpaper-library-maintenance\gallery-publication\manifests
+Backup root:     F:\Wallpapers\.wallpaper-library-maintenance\gallery-publication\backups
+Journal root:    F:\Wallpapers\.wallpaper-library-maintenance\gallery-publication\journals
+Recovery results: F:\Wallpapers\.wallpaper-library-maintenance\gallery-publication\recovery-results
+Report root:     F:\Wallpapers\reports\gallery-publication
+Queue state dir: F:\Wallpapers\.wallpaper-download-queue
+Hold token file: F:\Wallpapers\.wallpaper-library-maintenance\gallery-publication-hold.json
+```
+
+The implemented command stages are `Inspect -WhatIf`, `Prepare -Apply`, direct
+Python `validate`, `Publish -Apply -CutoverAuthorized`, and
+`Recover -Apply`. Prepare creates a unique candidate, initial report, and
+manifest without changing canonical bytes. Publish requires a fresh under-hold
+report and creates the hashed pre-activation backup plus append-only journal.
+Recover requires the exact manifest, backup directory, first journal, recovery
+result root, queue-state directory, and current external hold; it never restarts
+a listener or releases the hold.
+
+Manifest states are `candidate-built`, `candidate-verified`,
+`ready-to-publish`, `published`, and `rolled-back`. Repository/campaign status
+uses `planned`, `implemented`, and `repository-verified`; diagnostic/external
+status uses `candidate-blocked` and `cut-over`. The latter two are not manifest
+states. A report, task-manager `executed` value, candidate file, or browser
+diagnostic alone proves none of the later states.
+
 The application is loopback-only by default, but loopback is still a local
 trust surface. Other programs and users on the machine may be able to connect.
 The server therefore has no generic filesystem root and never falls back to a
@@ -129,11 +179,14 @@ Require `VERIFIED`, machine ID `snd-host`, computer `SND-HOST`, and account
 `SND-HOST\Dev`. Then launch the in-repository source with every runtime root
 named explicitly:
 
-`F:\Wallpapers\wallpaper_library.sqlite` is not the gallery database. It is a
-schema-2 index owned by the sibling `F:\Wallpapers\dl-engine` scheduled
-maintenance path. The allowlisted gallery must use the separately owned
+`F:\Wallpapers\wallpaper_library.sqlite` is not the gallery database. It was
+observed as schema 2 on 2026-07-20 and is owned by the sibling
+`F:\Wallpapers\dl-engine` scheduled maintenance path; this docs pass did not
+recheck its schema. The allowlisted gallery must use the separately owned
 schema-4 `F:\Wallpapers\webgallery_library.sqlite`; see
-`docs/INDEX_LIBRARY.md` for its rebuild and verification gate.
+`docs/INDEX_LIBRARY.md` for its publication and verification gate. A schema-4
+file at that path is not enough: canonical use requires a `published` manifest,
+and deliberate listener adoption is a separate `cut-over` state.
 
 ```powershell
 $repo = 'F:\Wallpapers\webgallery'
@@ -162,6 +215,14 @@ Port 8091 is the alternate-listener smoke target and does not replace the
 existing listener. Stop it with Ctrl+C in its owning console. Any deliberate
 cutover requires stopping the old listener first; never run two listeners on
 the same port.
+
+The command above is an operational launch template, not evidence that it was
+run. Plan 004 candidate browser QA must substitute the exact manifest-bound
+candidate database and unique QA-owned cache, report, environment, and queue
+roots, remain on alternate 8091, and issue no POSTs. It may not reuse the live
+queue/cache/report roots shown in the operational template. A bounded browser
+diagnostic remains non-promotional unless the candidate first has a successful
+exhaustive report and accepted manifest state.
 
 ## Snapshot generation and watcher
 
@@ -212,15 +273,27 @@ Use `-Once` for one cycle. To stop the watcher, pass `-Stop` and the same
 `-ReportOutputRoot`. Its duplicate-instance check reads the previous PID before
 publishing the new PID; stale PID files are removed safely.
 
-## Rollback
+## Listener rollback and database recovery
 
-1. Stop the allowlisted server and watcher.
-2. Restore the prior server/generator source and the last known generated HTML.
-3. If desired, remove only the dedicated thumbnail-cache root while the server
-   is stopped.
-4. Restart the prior listener only after the identity gate and bounded probes.
+For a source/listener-only rollback:
+
+1. Stop only the explicitly owned allowlisted server and watcher.
+2. Restore the prior server/generator source and last known generated HTML.
+3. If desired, remove only the explicitly owned thumbnail-cache root while its
+   server is stopped.
+4. Restart the prior listener only after the identity gate, exact launch-tuple
+   review, and bounded probes.
+
+For any Plan 004 database activation attempt, do not delete or hand-copy the
+canonical main/WAL/SHM set. Keep the external recovery hold asserted and use
+the exact `Recover -Apply` command in
+[`docs/INDEX_LIBRARY.md`](../docs/INDEX_LIBRARY.md#plan-004-operator-workflow)
+with the transaction's manifest, hashed backup directory, first journal, and
+all known continuation segments. The backup is the exact pre-activation
+canonical set and rollback basis; it is not a candidate or publication marker.
+Initial, under-hold, failed, and post-publication reports remain immutable under
+`F:\Wallpapers\reports\gallery-publication` and are not listener-health proof.
 
 The server does not migrate its configured database or alter canonical media.
-Live cutover, live cache generation, listener restart, and live HTTP
-verification remain gated until the separate schema-4 gallery database has
-been published and verified.
+Publication, cutover, hold release, listener restart, cache generation, and
+live HTTP/browser verification remain distinct operator-owned gates.

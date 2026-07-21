@@ -2999,5 +2999,267 @@ class DashboardTests(unittest.TestCase):
                 conn.close()
 
 
+# ---------------------------------------------------------------------------
+# Write-mode CLI failure cleanup
+# ---------------------------------------------------------------------------
+
+
+class _TrackingConnection:
+    """Delegate SQLite work while recording transaction cleanup attempts."""
+
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        close_error: BaseException | None = None,
+    ) -> None:
+        self.connection = connection
+        self.close_error = close_error
+        self.rollback_calls = 0
+        self.close_calls = 0
+
+    def __getattr__(self, name: str):
+        return getattr(self.connection, name)
+
+    def rollback(self) -> None:
+        self.rollback_calls += 1
+        self.connection.rollback()
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self.connection.close()
+        if self.close_error is not None:
+            raise self.close_error
+
+
+def _write_mode_arguments(root: Path, *, enrich: bool = False) -> list[str]:
+    arguments = [
+        "--library-root", str(root / "library"),
+        "--db-path", str(root / "index.sqlite"),
+        "--ledger-path", str(root / "wallhaven.jsonl"),
+        "--provider-ledger-path", str(root / "provider.jsonl"),
+    ]
+    if enrich:
+        arguments.extend(("--enrich", "--env-path", str(root / ".env")))
+    return arguments
+
+
+def _empty_ingest_stats() -> dict[str, int]:
+    return {
+        key: 0
+        for key in (
+            "scanned", "wallhaven", "zerochan", "anime_pictures", "unknown",
+            "tagged", "sidecars", "invalid_sidecars", "stale_removed",
+            "ledger_lines", "ledger_records", "ledger_invalid",
+            "ledger_superseded", "ledger_applied", "ledger_unmatched",
+            "provider_ledger_lines", "provider_ledger_records",
+            "provider_ledger_invalid", "provider_ledger_superseded",
+            "provider_records_matched", "provider_records_unmatched",
+            "provider_images_updated", "provider_tags_applied",
+        )
+    }
+
+
+class WriteModeFailureCleanupTests(unittest.TestCase):
+    @staticmethod
+    def _open_tracking_database(root: Path) -> _TrackingConnection:
+        database = root / "index.sqlite"
+        migrated = idx.connect(database)
+        migrated.close()
+        return _TrackingConnection(idx.connect(database))
+
+    @staticmethod
+    def _prepare_library(root: Path) -> None:
+        library = root / "library"
+        library.mkdir()
+        (library / "wallhaven_abcd1_1920x1080.jpg").write_bytes(b"image")
+        (root / "wallhaven.jsonl").write_text("", encoding="utf-8")
+        (root / "provider.jsonl").write_text("", encoding="utf-8")
+
+    def test_partial_ingest_failure_rolls_back_closes_and_returns_two(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._prepare_library(root)
+            tracked = self._open_tracking_database(root)
+            original_upsert = idx._upsert_image
+            mutation_observed = False
+
+            def fail_after_first_upsert(connection, values):
+                nonlocal mutation_observed
+                image_id = original_upsert(connection, values)
+                mutation_observed = True
+                raise RuntimeError("injected ingest failure after write")
+
+            output = io.StringIO()
+            with mock.patch.object(idx, "connect", return_value=tracked), mock.patch.object(
+                idx, "_upsert_image", side_effect=fail_after_first_upsert,
+            ), redirect_stdout(output):
+                result = idx.main(_write_mode_arguments(root))
+
+            self.assertEqual(result, 2)
+            self.assertTrue(mutation_observed)
+            self.assertEqual(tracked.rollback_calls, 1)
+            self.assertEqual(tracked.close_calls, 1)
+            self.assertNotIn("Ingest complete:", output.getvalue())
+            check = sqlite3.connect(root / "index.sqlite")
+            try:
+                self.assertEqual(check.execute("SELECT COUNT(*) FROM images").fetchone()[0], 0)
+            finally:
+                check.close()
+
+    def test_partial_enrichment_failure_rolls_back_closes_and_returns_two(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._prepare_library(root)
+            (root / ".env").write_text("", encoding="utf-8")
+            tracked = self._open_tracking_database(root)
+            tracked.execute("CREATE TABLE failure_marker(value TEXT NOT NULL)")
+            tracked.commit()
+
+            def fail_after_enrichment_write(connection, *_args, **_kwargs):
+                connection.execute("INSERT INTO failure_marker VALUES ('partial')")
+                raise RuntimeError("injected enrichment failure after write")
+
+            with mock.patch.object(idx, "connect", return_value=tracked), mock.patch.object(
+                idx, "ingest_library", return_value=_empty_ingest_stats(),
+            ), mock.patch.object(idx, "load_api_key", return_value=None), mock.patch.object(
+                idx, "_estimate_enrich_minutes", return_value=0,
+            ), mock.patch.object(
+                idx, "enrich_wallhaven", side_effect=fail_after_enrichment_write,
+            ):
+                result = idx.main(_write_mode_arguments(root, enrich=True))
+
+            self.assertEqual(result, 2)
+            self.assertEqual(tracked.rollback_calls, 1)
+            self.assertEqual(tracked.close_calls, 1)
+            check = sqlite3.connect(root / "index.sqlite")
+            try:
+                self.assertEqual(
+                    check.execute("SELECT COUNT(*) FROM failure_marker").fetchone()[0],
+                    0,
+                )
+            finally:
+                check.close()
+
+    def test_ordinary_close_failure_is_reported_as_exit_two(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._prepare_library(root)
+            database = root / "index.sqlite"
+            migrated = idx.connect(database)
+            migrated.close()
+            tracked = _TrackingConnection(
+                idx.connect(database), close_error=OSError("injected close failure")
+            )
+            with mock.patch.object(idx, "connect", return_value=tracked), mock.patch.object(
+                idx, "ingest_library", return_value=_empty_ingest_stats(),
+            ):
+                result = idx.main(_write_mode_arguments(root))
+
+            self.assertEqual(result, 2)
+            self.assertEqual(tracked.rollback_calls, 0)
+            self.assertEqual(tracked.close_calls, 1)
+
+    def test_ingest_interruptions_rollback_close_and_reraise_without_partial_rows(self) -> None:
+        import tempfile
+
+        for primary in (KeyboardInterrupt(), SystemExit(23)):
+            with self.subTest(exception=type(primary).__name__), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self._prepare_library(root)
+                tracked = self._open_tracking_database(root)
+                original_upsert = idx._upsert_image
+
+                def interrupt_after_first_upsert(connection, values):
+                    original_upsert(connection, values)
+                    raise primary
+
+                with mock.patch.object(idx, "connect", return_value=tracked), mock.patch.object(
+                    idx, "_upsert_image", side_effect=interrupt_after_first_upsert,
+                ):
+                    with self.assertRaises(type(primary)) as raised:
+                        idx.main(_write_mode_arguments(root))
+
+                if isinstance(primary, SystemExit):
+                    self.assertEqual(raised.exception.code, 23)
+                self.assertEqual(tracked.rollback_calls, 1)
+                self.assertEqual(tracked.close_calls, 1)
+                check = sqlite3.connect(root / "index.sqlite")
+                try:
+                    self.assertEqual(
+                        check.execute("SELECT COUNT(*) FROM images").fetchone()[0],
+                        0,
+                    )
+                finally:
+                    check.close()
+
+    def test_enrichment_interruptions_rollback_close_and_reraise(self) -> None:
+        import tempfile
+
+        for primary in (KeyboardInterrupt(), SystemExit(29)):
+            with self.subTest(exception=type(primary).__name__), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self._prepare_library(root)
+                (root / ".env").write_text("", encoding="utf-8")
+                tracked = self._open_tracking_database(root)
+                tracked.execute("CREATE TABLE failure_marker(value TEXT NOT NULL)")
+                tracked.commit()
+
+                def interrupt_after_enrichment_write(connection, *_args, **_kwargs):
+                    connection.execute("INSERT INTO failure_marker VALUES ('partial')")
+                    raise primary
+
+                with mock.patch.object(idx, "connect", return_value=tracked), mock.patch.object(
+                    idx, "ingest_library", return_value=_empty_ingest_stats(),
+                ), mock.patch.object(idx, "load_api_key", return_value=None), mock.patch.object(
+                    idx, "_estimate_enrich_minutes", return_value=0,
+                ), mock.patch.object(
+                    idx, "enrich_wallhaven", side_effect=interrupt_after_enrichment_write,
+                ):
+                    with self.assertRaises(type(primary)) as raised:
+                        idx.main(_write_mode_arguments(root, enrich=True))
+
+                if isinstance(primary, SystemExit):
+                    self.assertEqual(raised.exception.code, 29)
+                self.assertEqual(tracked.rollback_calls, 1)
+                self.assertEqual(tracked.close_calls, 1)
+                check = sqlite3.connect(root / "index.sqlite")
+                try:
+                    self.assertEqual(
+                        check.execute("SELECT COUNT(*) FROM failure_marker").fetchone()[0],
+                        0,
+                    )
+                finally:
+                    check.close()
+
+    def test_close_interruptions_are_not_swallowed(self) -> None:
+        import tempfile
+
+        for close_error in (KeyboardInterrupt(), SystemExit(31)):
+            with self.subTest(exception=type(close_error).__name__), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self._prepare_library(root)
+                database = root / "index.sqlite"
+                migrated = idx.connect(database)
+                migrated.close()
+                tracked = _TrackingConnection(
+                    idx.connect(database), close_error=close_error
+                )
+                with mock.patch.object(idx, "connect", return_value=tracked), mock.patch.object(
+                    idx, "ingest_library", return_value=_empty_ingest_stats(),
+                ):
+                    with self.assertRaises(type(close_error)) as raised:
+                        idx.main(_write_mode_arguments(root))
+                if isinstance(close_error, SystemExit):
+                    self.assertEqual(raised.exception.code, 31)
+                self.assertEqual(tracked.close_calls, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
